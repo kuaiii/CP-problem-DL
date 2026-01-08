@@ -1,0 +1,10 @@
+2026-01-08 15:48:51 - root - INFO - Logger initialized. Log file: results\BA_50\random\gcc\7\experiment.log
+2026-01-08 15:48:51 - __main__ - INFO - Experiment ID: 7
+2026-01-08 15:48:51 - __main__ - INFO - Saving results to: results\BA_50\random\gcc\7
+2026-01-08 15:48:51 - __main__ - INFO - Nodes: 50, Edges: 141
+2026-01-08 15:48:51 - __main__ - INFO - Starting 1 simulations...
+2026-01-08 15:48:51 - src.topology.optimization - INFO -   Optimizing Network Structure using Genetic Algorithm
+2026-01-08 15:48:55 - src.topology.optimization - INFO -   Initial Robustness: 0.2380
+2026-01-08 15:48:55 - src.topology.optimization - INFO -   Starting ONION Structure Optimization...
+2026-01-08 15:48:56 - src.topology.optimization - INFO -   Final Robustness: 0.4988
+2026-01-08 15:48:56 - src.topology.optimization - INFO -   Starting SOLO Structure Optimization...

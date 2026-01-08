@@ -1,0 +1,11 @@
+Method,Mean,Std
+Baseline,0.3690,0.0000
+RCP,0.3235,0.0000
+Random,0.3767,0.0000
+Hybrid,0.3438,0.0000
+Bi-level,0.4283,0.0000
+Bimodal+Random,0.3784,0.0000
+Random+RL,0.3923,0.0000
+GA+RL,0.3978,0.0000
+Onion+Ra,0.3697,0.0000
+Onion+RL,0.2511,0.0000

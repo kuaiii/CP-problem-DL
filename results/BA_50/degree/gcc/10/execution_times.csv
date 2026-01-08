@@ -1,0 +1,12 @@
+Stage,Mean Time (s),Total Time (s),Min Time (s),Max Time (s),Iterations
+Construct_Random,0.0000,0.0000,0.0000,0.0000,1
+Construct_BA,0.0010,0.0010,0.0010,0.0010,1
+Construct_Two,0.0022,0.0022,0.0022,0.0022,1
+Construct_Three,4.1676,4.1676,4.1676,4.1676,1
+Construct_Onion,1.2150,1.2150,1.2150,1.2150,1
+Construct_SOLO,0.0088,0.0088,0.0088,0.0088,1
+Construct_ROMEN,6.7152,6.7152,6.7152,6.7152,1
+Construct_BimodalRL,63.6174,63.6174,63.6174,63.6174,1
+Construct_UNITY,0.0171,0.0171,0.0171,0.0171,1
+Simulation_Run,0.7132,0.7132,0.7132,0.7132,1
+Total_Iteration,76.4602,76.4602,76.4602,76.4602,1

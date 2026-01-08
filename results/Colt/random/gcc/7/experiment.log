@@ -1,0 +1,150 @@
+2026-01-08 10:21:11 - root - INFO - Logger initialized. Log file: results\Colt\random\gcc\7\experiment.log
+2026-01-08 10:21:11 - __main__ - INFO - Experiment ID: 7
+2026-01-08 10:21:11 - __main__ - INFO - Saving results to: results\Colt\random\gcc\7
+2026-01-08 10:21:11 - __main__ - INFO - Nodes: 153, Edges: 177
+2026-01-08 10:21:11 - __main__ - INFO - Starting 1 simulations...
+2026-01-08 10:21:11 - src.topology.optimization - INFO -   Optimizing Network Structure using Genetic Algorithm
+2026-01-08 10:22:46 - src.topology.optimization - INFO -   Initial Robustness: 0.0689
+2026-01-08 10:22:46 - src.topology.optimization - INFO -   Starting ONION Structure Optimization...
+2026-01-08 10:22:58 - src.topology.optimization - INFO -   Final Robustness: 0.1694
+2026-01-08 10:22:58 - src.topology.optimization - INFO -   Starting SOLO Structure Optimization...
+2026-01-08 10:22:58 - src.topology.optimization - INFO -   Starting ROMEN Structure Optimization...
+2026-01-08 10:22:58 - src.topology.optimization - INFO - === Starting ROMEM Topology Optimization ===
+2026-01-08 10:23:07 - src.topology.bimodal_rl - INFO -   Starting Bimodal RL Structure Optimization (Enhanced)...
+2026-01-08 10:23:07 - src.topology.bimodal_rl - INFO - === Starting Bimodal RL Topology Optimization (Enhanced) ===
+2026-01-08 10:24:07 - __main__ - INFO - 
+--- Original (Baseline/RCP) Topology Info ---
+Nodes: 153, Edges: 177
+Degree Stats: Max=18, Min=1, Avg=2.3137
+Degree Sequence (Top 20): [18, 11, 9, 8, 7, 6, 6, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 3, 3] ...
+Degree Sequence (Bottom 20): [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+2026-01-08 10:24:07 - __main__ - INFO - 
+--- Random (G1 - 随机部署) Topology Info ---
+Nodes: 153, Edges: 177
+Degree Stats: Max=7, Min=0, Avg=2.3137
+Degree Sequence (Top 20): [7, 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4] ...
+Degree Sequence (Bottom 20): [1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-01-08 10:24:07 - __main__ - INFO - 
+--- Scale-Free (G2) Topology Info ---
+Nodes: 153, Edges: 177
+Degree Stats: Max=20, Min=0, Avg=2.3137
+Degree Sequence (Top 20): [20, 15, 11, 11, 8, 8, 7, 7, 6, 6, 6, 6, 5, 5, 5, 5, 4, 4, 4, 4] ...
+Degree Sequence (Bottom 20): [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2026-01-08 10:24:07 - __main__ - INFO - 
+--- Bimodal (G3 - 双层构造/RL-RCP) Topology Info ---
+Nodes: 153, Edges: 177
+Degree Stats: Max=15, Min=1, Avg=2.3137
+Degree Sequence (Top 20): [15, 13, 13, 13, 13, 13, 13, 13, 12, 11, 11, 11, 11, 10, 10, 8, 3, 3, 2, 2] ...
+Degree Sequence (Bottom 20): [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+2026-01-08 10:24:07 - __main__ - INFO - 
+--- GA Optimized (G4 - 混合指标) Topology Info ---
+Nodes: 153, Edges: 177
+Degree Stats: Max=5, Min=0, Avg=2.3137
+Degree Sequence (Top 20): [5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 3] ...
+Degree Sequence (Bottom 20): [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0]
+2026-01-08 10:24:07 - __main__ - INFO - 
+--- ONION Optimized (G5 - ONION) Topology Info ---
+Nodes: 153, Edges: 177
+Degree Stats: Max=18, Min=1, Avg=2.3137
+Degree Sequence (Top 20): [18, 11, 9, 8, 7, 6, 6, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 3, 3] ...
+Degree Sequence (Bottom 20): [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+2026-01-08 10:24:07 - __main__ - INFO - 
+--- SOLO Optimized (G6 - SOLO) Topology Info ---
+Nodes: 153, Edges: 177
+Degree Stats: Max=4, Min=1, Avg=2.3137
+Degree Sequence (Top 20): [4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3] ...
+Degree Sequence (Bottom 20): [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+2026-01-08 10:24:07 - __main__ - INFO - 
+--- ROMEN Optimized (G7 - ROMEN) Topology Info ---
+Nodes: 153, Edges: 177
+Degree Stats: Max=18, Min=1, Avg=2.3137
+Degree Sequence (Top 20): [18, 11, 9, 8, 7, 6, 6, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 3, 3] ...
+Degree Sequence (Bottom 20): [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+2026-01-08 10:24:07 - __main__ - INFO - 
+--- BimodalRL Optimized (G8 - BimodalRL) Topology Info ---
+Nodes: 153, Edges: 177
+Degree Stats: Max=18, Min=1, Avg=2.3137
+Degree Sequence (Top 20): [18, 11, 9, 8, 7, 6, 6, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 3, 3] ...
+Degree Sequence (Bottom 20): [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+2026-01-08 10:24:07 - src.controller.manager - INFO - 
+[Iteration 0] random Simulation (Metric: gcc)
+2026-01-08 10:24:07 - src.controller.manager - INFO - 
+--- Processing Strategy: Baseline ---
+2026-01-08 10:24:07 - src.controller.manager - INFO - Topology: Nodes=153, Edges=177
+2026-01-08 10:24:07 - src.controller.manager - INFO - Controllers (16): [42, 121, 109, 19, 146, 24, 131, 64, 91, 12, 106, 25, 16, 39, 92, 107]
+2026-01-08 10:24:07 - src.simulation.dismantling - INFO - Generating dismantling sequence using method: random
+2026-01-08 10:24:07 - src.simulation.dismantling - INFO - Starting node attack simulation. Mode: random, Metric: gcc
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Starting simulation. Initial nodes: 153, Centers: 16
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Controller 131 removed by attack.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 1 nodes.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Controller 16 removed by attack.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Controller 24 removed by attack.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 13 nodes.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Controller 25 removed by attack.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 6 nodes.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Controller 109 removed by attack.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 7 nodes.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Controller 106 removed by attack.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 4 nodes.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Metric dropped below 0.2 at x=0.5033
+2026-01-08 10:24:07 - src.simulation.dismantling - INFO - Attack completed. Collapse point (x_zero): 0.5032679738562091
+2026-01-08 10:24:07 - src.controller.manager - INFO - Result: r_val=0.3297, collapse_point=0.5032679738562091
+2026-01-08 10:24:07 - src.controller.manager - INFO - 
+--- Processing Strategy: RCP ---
+2026-01-08 10:24:07 - src.controller.manager - INFO - Topology: Nodes=153, Edges=177
+2026-01-08 10:24:07 - src.controller.manager - INFO - Controllers (16): [118, 143, 152, 144, 151, 10, 140, 50, 81, 123, 142, 122, 139, 23, 74, 29]
+2026-01-08 10:24:07 - src.simulation.dismantling - INFO - Generating dismantling sequence using method: random
+2026-01-08 10:24:07 - src.simulation.dismantling - INFO - Starting node attack simulation. Mode: random, Metric: gcc
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Starting simulation. Initial nodes: 153, Centers: 16
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Controller 123 removed by attack.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 3 nodes.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Controller 143 removed by attack.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 8 nodes.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Controller 144 removed by attack.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 3 nodes.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Controller 122 removed by attack.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Controller 74 removed by attack.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 7 nodes.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Controller 23 removed by attack.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 3 nodes.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Controller 118 removed by attack.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 9 nodes.
+2026-01-08 10:24:07 - src.simulation.dismantling - DEBUG - Metric dropped below 0.2 at x=0.4314
+2026-01-08 10:24:07 - src.simulation.dismantling - INFO - Attack completed. Collapse point (x_zero): 0.43137254901960786
+2026-01-08 10:24:07 - src.controller.manager - INFO - Result: r_val=0.2399, collapse_point=0.43137254901960786
+2026-01-08 10:24:08 - src.controller.manager - INFO - 
+--- Processing Strategy: Bi-level ---
+2026-01-08 10:24:08 - src.controller.manager - INFO - Topology: Nodes=153, Edges=177
+2026-01-08 10:24:08 - src.controller.manager - INFO - Controllers (16): [46, 29, 17, 18, 21, 34, 42, 136, 84, 152, 74, 124, 96, 97, 105, 101]
+2026-01-08 10:24:08 - src.simulation.dismantling - INFO - Generating dismantling sequence using method: random
+2026-01-08 10:24:08 - src.simulation.dismantling - INFO - Starting node attack simulation. Mode: random, Metric: gcc
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Starting simulation. Initial nodes: 153, Centers: 16
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Controller 17 removed by attack.
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 9 nodes.
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Controller 101 removed by attack.
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 18 nodes.
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Controller 124 removed by attack.
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 7 nodes.
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Controller 29 removed by attack.
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 3 nodes.
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Metric dropped below 0.2 at x=0.4314
+2026-01-08 10:24:08 - src.simulation.dismantling - INFO - Attack completed. Collapse point (x_zero): 0.43137254901960786
+2026-01-08 10:24:08 - src.controller.manager - INFO - Result: r_val=0.2523, collapse_point=0.43137254901960786
+2026-01-08 10:24:08 - src.controller.manager - INFO - 
+--- Processing Strategy: Bimodal+Random ---
+2026-01-08 10:24:08 - src.controller.manager - INFO - Topology: Nodes=153, Edges=177
+2026-01-08 10:24:08 - src.controller.manager - INFO - Controllers (16): [116, 64, 17, 95, 21, 34, 42, 136, 84, 59, 74, 93, 96, 97, 100, 149]
+2026-01-08 10:24:08 - src.simulation.dismantling - INFO - Generating dismantling sequence using method: random
+2026-01-08 10:24:08 - src.simulation.dismantling - INFO - Starting node attack simulation. Mode: random, Metric: gcc
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Starting simulation. Initial nodes: 153, Centers: 16
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Controller 21 removed by attack.
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 26 nodes.
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Controller 34 removed by attack.
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 1 nodes.
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Controller 136 removed by attack.
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 6 nodes.
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Controller 116 removed by attack.
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Cascade failure triggered. Removing 54 nodes.
+2026-01-08 10:24:08 - src.simulation.dismantling - DEBUG - Metric dropped below 0.2 at x=0.8562
+2026-01-08 10:24:08 - src.simulation.dismantling - INFO - Attack completed. Collapse point (x_zero): 0.8562091503267973
+2026-01-08 10:24:08 - src.controller.manager - INFO - Result: r_val=0.3091, collapse_point=0.8562091503267973
