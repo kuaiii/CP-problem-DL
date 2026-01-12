@@ -65,8 +65,8 @@ def save_statistics_to_csv(x_values, save_dir, filename="statistics.csv"):
     headers = ["Method", "Mean", "Std"]
     rows = []
     
-    # 同样使用固定顺序，确保与绘图一致
-    fixed_order = ["Baseline", "RCP", "Bi-level", "Bimodal+Random", "Random+RL", "GA+RL", "Onion+Ra", "Onion+RL", "SOLO+Ra", "SOLO+RL", "ROMEN+Ra", "ROMEN+RL"]
+    # 同样使用固定顺序，确保与绘图一致（已删除 Random+RL, Bimodal+Random, SOLO+Ra, SOLO+RL）
+    fixed_order = ["Baseline", "RCP", "Bi-level", "GA+RL", "Onion+Ra", "Onion+RL", "ROMEN+Ra", "ROMEN+RL", "BimodalRL", "UNITY+Ra", "UNITY+RL"]
     
     # 处理固定顺序的方法
     for method in fixed_order:
@@ -108,18 +108,12 @@ def save_comprehensive_metrics(metrics_summary, save_dir, attack_mode):
     path = os.path.join(save_dir, filename)
     
     # 定义表头
-    # 如果能获取到 Random 和 Degree 的 R，我们可以计算加权 R
-    # 目前我们只有当前 attack_mode 的 R
-    # 我们将列命名为 "R (Current Attack)"
-    # 如果用户严格要求 "0.5*random + 0.5*degree"，我们需要额外数据。
-    # 这里我们暂且记录当前的 R。
-    
     headers = ["Method", "Nodes", "Edges", "Top-10 Degrees", "CSA", "Control Entropy (H_C)", "Weighted Control Potential (WCP)", f"Robustness (R - {attack_mode})"]
     
     rows = []
     
-    # 按照固定顺序输出
-    fixed_order = ["Baseline", "RCP", "Bi-level", "Bimodal+Random", "Random+RL", "GA+RL", "Onion+Ra", "Onion+RL", "SOLO+Ra", "SOLO+RL", "ROMEN+Ra", "ROMEN+RL", "BimodalRL", "UNITY"]
+    # 按照固定顺序输出（已删除 Random+RL, Bimodal+Random, SOLO+Ra, SOLO+RL）
+    fixed_order = ["Baseline", "RCP", "Bi-level", "GA+RL", "Onion+Ra", "Onion+RL", "ROMEN+Ra", "ROMEN+RL", "BimodalRL", "UNITY+Ra", "UNITY+RL"]
     
     # 处理每个方法
     for method in fixed_order:
@@ -127,11 +121,11 @@ def save_comprehensive_metrics(metrics_summary, save_dir, attack_mode):
             data_list = metrics_summary[method]
             if not data_list:
                 continue
-                
-            # 计算平均值
-            avg_csa = np.mean([d['CSA'] for d in data_list])
-            avg_hc = np.mean([d['H_C'] for d in data_list])
-            avg_wcp = np.mean([d['WCP'] for d in data_list])
+            
+            # 计算初始指标的平均值（从曲线的第一个点）
+            avg_csa = np.mean([d['CSA_Curve'][0][0] if d['CSA_Curve'] else 0 for d in data_list])
+            avg_hc = np.mean([d['CCE_Curve'][0][0] if d['CCE_Curve'] else 0 for d in data_list])
+            avg_wcp = np.mean([d['WCP_Curve'][0][0] if d['WCP_Curve'] else 0 for d in data_list])
             avg_r = np.mean([d['R'] for d in data_list])
             
             # 获取拓扑属性（假设每次迭代拓扑结构相似，取最后一次的值）
@@ -155,9 +149,9 @@ def save_comprehensive_metrics(metrics_summary, save_dir, attack_mode):
     for method, data_list in metrics_summary.items():
         if method not in fixed_order:
              if not data_list: continue
-             avg_csa = np.mean([d['CSA'] for d in data_list])
-             avg_hc = np.mean([d['H_C'] for d in data_list])
-             avg_wcp = np.mean([d['WCP'] for d in data_list])
+             avg_csa = np.mean([d['CSA_Curve'][0][0] if d['CSA_Curve'] else 0 for d in data_list])
+             avg_hc = np.mean([d['CCE_Curve'][0][0] if d['CCE_Curve'] else 0 for d in data_list])
+             avg_wcp = np.mean([d['WCP_Curve'][0][0] if d['WCP_Curve'] else 0 for d in data_list])
              avg_r = np.mean([d['R'] for d in data_list])
              
              last_entry = data_list[-1]

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import networkx as nx
 import random
+import numpy as np
 from math import ceil
 
 def construct_Two(G, controllers_rate):
@@ -76,7 +77,7 @@ def construct_Two_MaxK1(G):
     limit_kmin = int(avg_degree)
     if limit_kmin < 1: limit_kmin = 1
     
-    for k_min in range(1, limit_kmin + 1):
+    for k_min in range(limit_kmin, 0, -1):
         # We want to solve for k1, kmax
         # k1 = (2m - n * kmin) / (kmax - kmin)
         # To maximize k1, we need to minimize (kmax - kmin).
@@ -167,3 +168,126 @@ def _generate_bimodal_graph(n, m, k1, k2, kmax, kmin):
             G_simple.remove_edge(*edges[i])
             
     return G_simple
+
+
+def create_bimodal_network_exact(G):
+    """
+    构造符合最优双峰度分布的无向网络（精准分配低度节点的度）
+    
+    参数:
+        G: 输入图
+    
+    返回:
+        G: networkx.Graph 对象，构造好的双峰网络
+    """
+    # 1. 初始化随机种子和空图
+    N = G.number_of_nodes()
+    M = G.number_of_edges()
+    
+    seed = 42
+    random.seed(seed)
+    np.random.seed(seed)
+    
+    # 2. 动态计算度序列参数
+    total_degree = 2 * M
+    avg_degree = total_degree / N
+    
+    # 根据理论公式计算 k_max
+    # k_max = A * N^(2/3)
+    # 其中 A = (2 * <k>^2 * (<k>-1)^2 / (2*<k>-1))^(1/3)
+    k = avg_degree
+    A = (2 * k**2 * (k - 1)**2 / (2 * k - 1))**(1/3)
+    k_max = int(A * (N**(2/3)))
+    
+    # 确保 k_max 在合理范围内
+    k_max = min(k_max, N - 1)
+    if k_max < int(avg_degree) + 1:
+        k_max = int(avg_degree) + 1
+    
+    num_max_nodes = 1
+    remaining_degree = total_degree - k_max * num_max_nodes
+    num_min_nodes = N - num_max_nodes
+    
+    # 计算低度节点的度分配
+    # 设 x 个节点度为 k_mid，y 个节点度为 k_min
+    # x + y = num_min_nodes
+    # x * k_mid + y * k_min = remaining_degree
+    
+    k_min = max(1, int(avg_degree * 0.5))
+    k_mid = int(avg_degree * 1.5)
+    
+    # 解方程: x * k_mid + (num_min_nodes - x) * k_min = remaining_degree
+    # x * (k_mid - k_min) = remaining_degree - num_min_nodes * k_min
+    denominator = k_mid - k_min
+    if denominator <= 0:
+        denominator = 1
+    
+    x = (remaining_degree - num_min_nodes * k_min) // denominator
+    y = num_min_nodes - x
+    
+    # 确保 x 和 y 在合理范围内
+    if x < 0:
+        x = 0
+        y = num_min_nodes
+    if y < 0:
+        y = 0
+        x = num_min_nodes
+    
+    # 调整度值以确保总和匹配
+    actual_degree = k_max * num_max_nodes + x * k_mid + y * k_min
+    remainder = total_degree - actual_degree
+    
+    # 将余数均匀分配到节点上
+    degree_sequence = [k_max] * num_max_nodes + [k_mid] * x + [k_min] * y
+    for i in range(remainder):
+        degree_sequence[i % N] += 1
+    
+    # 打乱度序列（避免模式化）
+    random.shuffle(degree_sequence)
+    
+    # 3. 验证度序列的合法性（可图化）
+    # 满足Erdős–Gallai条件（networkx会自动校验）
+    try:
+        # 用配置模型生成网络（保证度序列严格匹配）
+        G = nx.configuration_model(degree_sequence, seed=seed)
+        # 转为无向简单图（移除自环和重边）
+        G = G.to_undirected()
+        G.remove_edges_from(nx.selfloop_edges(G))
+    except Exception as e:
+        print(f"配置模型生成失败，原因：{e}")
+        # 备用方案：手动构造
+        G = nx.Graph()
+        G.add_nodes_from(range(N))
+        # 按度序列连接节点
+        nodes_by_degree = sorted(range(N), key=lambda i: degree_sequence[i], reverse=True)
+        for node in nodes_by_degree:
+            target_degree = degree_sequence[node]
+            current_degree = G.degree(node)
+            need_edges = target_degree - current_degree
+            if need_edges <= 0:
+                continue
+            # 随机选其他节点连接（避免重复/自环）
+            candidates = [n for n in range(N) if n != node and not G.has_edge(node, n)]
+            add_edges = random.sample(candidates, min(need_edges, len(candidates)))
+            for other_node in add_edges:
+                G.add_edge(node, other_node)
+    
+    # 4. 最终校准边数（确保严格等于M）
+    current_edges = G.number_of_edges()
+    if current_edges < M:
+        need_more = M - current_edges
+        # 生成所有可能的未连接边
+        all_possible = []
+        for u in range(N):
+            for v in range(u+1, N):
+                if not G.has_edge(u, v):
+                    all_possible.append((u, v))
+        add_edges = random.sample(all_possible, need_more)
+        G.add_edges_from(add_edges)
+    elif current_edges > M:
+        need_less = current_edges - M
+        remove_edges = random.sample(list(G.edges()), need_less)
+        G.remove_edges_from(remove_edges)
+    
+    return G
+

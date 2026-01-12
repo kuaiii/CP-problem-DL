@@ -1,6 +1,0 @@
-2026-01-06 10:52:59 - root - INFO - Logger initialized. Log file: results\GtsCe\random\gcc\10\experiment.log
-2026-01-06 10:52:59 - __main__ - INFO - Experiment ID: 10
-2026-01-06 10:52:59 - __main__ - INFO - Saving results to: results\GtsCe\random\gcc\10
-2026-01-06 10:52:59 - __main__ - INFO - Nodes: 149, Edges: 193
-2026-01-06 10:52:59 - __main__ - INFO - Starting 1 simulations...
-2026-01-06 10:52:59 - src.topology.optimization - INFO -   Optimizing Network Structure using Genetic Algorithm

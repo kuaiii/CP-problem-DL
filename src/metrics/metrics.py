@@ -1,6 +1,21 @@
 # -*- coding: utf-8 -*-
 import networkx as nx
 import math
+import numpy as np
+
+# 尝试导入 GPU 工具
+try:
+    from src.utils.gpu_utils import (
+        is_gpu_available, to_tensor, to_numpy, TORCH_AVAILABLE, CUDA_AVAILABLE, DEVICE
+    )
+    if TORCH_AVAILABLE:
+        import torch
+except ImportError:
+    TORCH_AVAILABLE = False
+    CUDA_AVAILABLE = False
+    
+    def is_gpu_available():
+        return False
 
 # 计算有权网络的最短路径
 def get_shortest_dist(G, source, dest):
@@ -132,39 +147,65 @@ def calculate_coverage(G, centers):
     """
     return coverage_compute2(G, centers)
 
+def calculate_lcc(G, centers):
+    """
+    计算包含控制器的最大连通子图 (LCC - Largest Connected Component with Controllers)
+    
+    在 SDN 网络中，只有包含控制器的连通分量才是有效的（可控制的）。
+    没有控制器的分量会发生级联失效。
+    
+    Args:
+        G (nx.Graph): 网络拓扑
+        centers (list): 控制器节点列表
+        
+    Returns:
+        int: 包含控制器的最大连通子图的节点数
+    """
+    if G.number_of_nodes() == 0:
+        return 0
+    
+    components = list(nx.connected_components(G))
+    if not components:
+        return 0
+    
+    centers_set = set(centers) if centers else set()
+    
+    # 如果没有控制器，返回0（网络完全失控）
+    if not centers_set:
+        return 0
+    
+    # 找出包含控制器的所有连通分量
+    controlled_components = []
+    for comp in components:
+        # 检查该分量是否包含至少一个控制器
+        if not centers_set.isdisjoint(comp):
+            controlled_components.append(comp)
+    
+    # 如果没有包含控制器的分量，返回0
+    if not controlled_components:
+        return 0
+    
+    # 返回包含控制器的最大连通分量的大小
+    return len(max(controlled_components, key=len))
+
 # -----------------------------------------------------------
 # 新增的指标计算函数 (CSA, H_C, WCP)
 # -----------------------------------------------------------
 
-def calculate_csa(G, centers, alpha=2.0):
+def calculate_csa(G, centers, alpha=0.2):
     """
     计算控制供给可用性 (Control Supply Availability, CSA)
     CSA = 1/|V_S| * sum(1 - e^(-alpha * k_i))
     
-    改进：
-    将默认 alpha 从 0.5 增加到 2.0，以增大不同连接数 k_i 之间的 CSA 值差异。
-    当 alpha=0.5 时：k=1 -> 0.39, k=2 -> 0.63, k=3 -> 0.77 (区分度平缓)
-    当 alpha=2.0 时：k=1 -> 0.86, k=2 -> 0.98, k=3 -> 0.99 (强调只要有连接就很好，但多连接的边际收益递减极快，更适合衡量"是否连接")
+    支持 GPU 加速计算
     
-    或者，如果想强调多连接的重要性，应该减小 alpha？
-    如果数值差别太小（都接近1.0），说明 alpha 太大了（稍微有一点连接就饱和了），或者 alpha 太小了（大家都差不多低）。
-    通常网络中 k_i 差异可能在 1-3 之间。
-    
-    如果想让 1个控制器和 2个控制器的得分拉开差距：
-    alpha=0.5: 0.39 vs 0.63 (差0.24)
-    alpha=0.1: 0.09 vs 0.18 (差0.09) - 区分度小
-    alpha=1.0: 0.63 vs 0.86 (差0.23)
-    alpha=2.0: 0.86 vs 0.98 (差0.12) - 区分度变小，因为饱和了
-    
-    如果用户觉得差别太小（比如都是 0.9997），那说明大部分节点的 k_i 都很大，导致所有项都饱和了。
-    这时候应该 **减小 alpha**，让函数进入线性区，从而体现出 k_i 大小的差异。
-    
-    例如，如果平均 k_i = 5：
-    alpha=0.5 -> 1 - e^-2.5 = 0.91
-    alpha=0.1 -> 1 - e^-0.5 = 0.39 (此时 k=6 -> 0.45，能看出差别)
-    
-    根据用户反馈 "数值差别太小"，推测是出现了饱和效应。
-    因此，我们将 alpha 调整为 **0.2**。
+    Args:
+        G (nx.Graph): 网络拓扑
+        centers (list): 控制器节点列表
+        alpha (float): 衰减因子，默认 0.2
+        
+    Returns:
+        float: CSA 值
     """
     if G.number_of_nodes() == 0:
         return 0.0
@@ -174,8 +215,9 @@ def calculate_csa(G, centers, alpha=2.0):
     
     if not switch_nodes:
         return 1.0
-        
-    total_csa = 0.0
+    
+    # 检查是否使用 GPU 加速
+    use_gpu = is_gpu_available() and TORCH_AVAILABLE and len(switch_nodes) > 100
     
     # 预计算连通分量及其包含的控制器数量
     components = list(nx.connected_components(G))
@@ -186,12 +228,22 @@ def calculate_csa(G, centers, alpha=2.0):
         num_centers_in_comp = len(comp.intersection(centers_set))
         for node in comp:
             node_to_k[node] = num_centers_in_comp
-            
-    for i in switch_nodes:
-        k_i = node_to_k.get(i, 0)
-        # 使用调整后的 alpha = 0.2
-        term = 1 - math.exp(-0.2 * k_i)
-        total_csa += term
+    
+    if use_gpu:
+        # GPU 加速版本
+        k_values = np.array([node_to_k.get(i, 0) for i in switch_nodes], dtype=np.float32)
+        k_tensor = torch.tensor(k_values, device=DEVICE)
+        
+        # 计算 1 - exp(-alpha * k_i)
+        csa_tensor = 1 - torch.exp(-alpha * k_tensor)
+        total_csa = torch.sum(csa_tensor).item()
+    else:
+        # CPU 版本
+        total_csa = 0.0
+        for i in switch_nodes:
+            k_i = node_to_k.get(i, 0)
+            term = 1 - math.exp(-alpha * k_i)
+            total_csa += term
         
     return total_csa / len(switch_nodes)
 
@@ -284,6 +336,8 @@ def calculate_wcp(G, centers, beta=1.0):
     计算加权控制势能 (Weighted Control Potential, WCP)
     WCP = 1/|V_S| * sum_i ( sum_j ( 1 / (d_ij)^beta ) )
     
+    支持 GPU 加速计算
+    
     Args:
         G (nx.Graph): 网络拓扑
         centers (list): 控制器节点列表
@@ -298,41 +352,75 @@ def calculate_wcp(G, centers, beta=1.0):
     
     if num_switches == 0:
         return 0.0
+    
+    # 检查是否使用 GPU 加速
+    use_gpu = is_gpu_available() and TORCH_AVAILABLE and num_switches > 50
+    
+    if use_gpu:
+        # GPU 加速版本
+        nodes_list = list(G.nodes())
+        node_to_idx = {node: i for i, node in enumerate(nodes_list)}
+        switch_indices = [node_to_idx[n] for n in switch_nodes if n in node_to_idx]
         
-    total_potential = 0.0
-    
-    # 累加器：每个交换机 i 的 sum_inv_dist
-    node_potentials = {n: 0.0 for n in switch_nodes}
-    
-    # 使用多源 Dijkstra 或 BFS 来处理
-    # 为了准确性和兼容性，我们检查图是否有权重
-    is_weighted = nx.is_weighted(G)
-    
-    for center in centers:
-        # 计算从 center 到所有节点的最短路径
-        try:
-            if is_weighted:
-                lengths = nx.single_source_dijkstra_path_length(G, center, weight='weight')
-            else:
+        # 预计算从所有控制器到所有节点的距离
+        num_centers = len(centers)
+        num_nodes = len(nodes_list)
+        
+        # 距离矩阵: centers x nodes
+        dist_matrix = np.full((num_centers, num_nodes), np.inf, dtype=np.float32)
+        
+        for i, center in enumerate(centers):
+            try:
                 lengths = nx.single_source_shortest_path_length(G, center)
-        except Exception:
-            continue
-            
-        for target, dist in lengths.items():
-            if target in node_potentials:
-                # 距离为 0 的情况（理论上 switch != center，但如果数据有误）
-                # 距离为 1 的情况 -> 贡献 1.0
-                # 距离越大，贡献越小
+                for target, dist in lengths.items():
+                    if target in node_to_idx:
+                        dist_matrix[i, node_to_idx[target]] = dist
+            except Exception:
+                continue
+        
+        # 转移到 GPU
+        dist_tensor = torch.tensor(dist_matrix, dtype=torch.float32, device=DEVICE)
+        
+        # 提取交换节点的距离
+        switch_dists = dist_tensor[:, switch_indices]  # centers x switches
+        
+        # 计算 1/dist^beta，处理 inf 和 0
+        valid_mask = (switch_dists > 0) & (switch_dists < float('inf'))
+        inv_dists = torch.where(valid_mask, 1.0 / (switch_dists ** beta), torch.zeros_like(switch_dists))
+        
+        # 对每个交换节点求和所有控制器的贡献
+        switch_potentials = torch.sum(inv_dists, dim=0)  # shape: (switches,)
+        
+        # 计算总 WCP
+        total_wcp = torch.sum(switch_potentials).item()
+        
+    else:
+        # CPU 版本 (原始实现)
+        # 累加器：每个交换机 i 的 sum_inv_dist
+        node_potentials = {n: 0.0 for n in switch_nodes}
+        
+        # 使用多源 Dijkstra 或 BFS 来处理
+        # 为了准确性和兼容性，我们检查图是否有权重
+        is_weighted = nx.is_weighted(G)
+        
+        for center in centers:
+            # 计算从 center 到所有节点的最短路径
+            try:
+                if is_weighted:
+                    lengths = nx.single_source_dijkstra_path_length(G, center, weight='weight')
+                else:
+                    lengths = nx.single_source_shortest_path_length(G, center)
+            except Exception:
+                continue
                 
-                # 修正：如果 dist 非常大（不连通），则忽略（lengths 里不会有）
-                if dist > 0:
-                    val = 1.0 / (dist ** beta)
-                    node_potentials[target] += val
-                # 如果 dist == 0，意味着重合，理论上贡献无穷大？
-                # 这里我们假设 switch 和 center 不重合。
-                
-    # 对所有交换机求和
-    total_wcp = sum(node_potentials.values())
+            for target, dist in lengths.items():
+                if target in node_potentials:
+                    if dist > 0:
+                        val = 1.0 / (dist ** beta)
+                        node_potentials[target] += val
+                    
+        # 对所有交换机求和
+        total_wcp = sum(node_potentials.values())
     
     # 问题分析：
     # 如果 WCP 突然下降，说明 dist 变大了，或者 node_potentials 里的项变少了（连通性变差）。

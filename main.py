@@ -7,7 +7,7 @@ import logging
 from tqdm import tqdm
 
 from src.topology.generators import load_graph, construct_random, construct_ba
-from src.topology.reconstruction import construct_Two, construct_Two_MaxK1
+from src.topology.reconstruction import construct_Two, construct_Two_MaxK1, create_bimodal_network_exact
 from src.topology.optimization import construct_Three, construct_onion, construct_solo, construct_romen, construct_unity
 from src.topology.bimodal_rl import construct_bimodal_rl
 from src.controller.manager import ControllerManager
@@ -27,26 +27,11 @@ def print_topology_info(name, G):
         G (nx.Graph): 网络图对象。
     """
     if G is None:
-        logger.info(f"\n--- {name} : None ---")
+        logger.info(f"{name}: None")
         return
         
-    degrees = sorted([d for n, d in G.degree()], reverse=True)
-    
-    info_str = f"\n--- {name} Topology Info ---\n"
-    info_str += f"Nodes: {G.number_of_nodes()}, Edges: {G.number_of_edges()}\n"
-    
-    if len(degrees) > 0:
-        avg_degree = sum(degrees) / len(degrees)
-        info_str += f"Degree Stats: Max={max(degrees)}, Min={min(degrees)}, Avg={avg_degree:.4f}\n"
-        
-        # 打印度序列（如果太长则缩略显示）
-        if len(degrees) <= 50:
-            info_str += f"Degree Sequence: {degrees}"
-        else:
-            info_str += f"Degree Sequence (Top 20): {degrees[:20]} ...\n"
-            info_str += f"Degree Sequence (Bottom 20): {degrees[-20:]}"
-            
-    logger.info(info_str)
+    # 精简输出：只显示节点数和边数
+    logger.info(f"{name}: Nodes={G.number_of_nodes()}, Edges={G.number_of_edges()}")
 
 def parse_arguments():
     """
@@ -81,12 +66,13 @@ def load_or_generate_graph(args):
     is_synthetic = args.synthetic
     scale = args.nodes
 
-    logger.info(f"\nProcessing Topology: {dataset_name}...")
+    # 精简日志：只输出关键信息
+    # logger.info(f"\nProcessing Topology: {dataset_name}...")
     
     G = None
     if is_synthetic:
         try:
-            logger.info(f"Generating BA Scale-Free Network (N={scale}, m=3)...")
+            # logger.info(f"Generating BA Scale-Free Network (N={scale}, m=3)...")
             G = nx.barabasi_albert_graph(scale, 3)
             # 添加边的权重属性
             for u, v in G.edges():
@@ -105,19 +91,18 @@ def load_or_generate_graph(args):
     
     return G, dataset_name
 
-def setup_experiment_dir(dataset_name, attack_mode, metric_type):
+def setup_experiment_dir(dataset_name, attack_mode):
     """
     确定实验 ID 并创建结果目录。
     
     Args:
         dataset_name (str): 数据集名称。
         attack_mode (str): 攻击模式。
-        metric_type (str): 指标类型。
         
     Returns:
-        tuple: (experiment_dir, experiment_id)
+        tuple: (experiment_id)
     """
-    base_dir = os.path.join('results', dataset_name, attack_mode, metric_type)
+    base_dir = os.path.join('results', dataset_name, attack_mode)
     experiment_id = 1
     if os.path.exists(base_dir):
         subdirs = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d))]
@@ -130,26 +115,31 @@ def setup_experiment_dir(dataset_name, attack_mode, metric_type):
         if numeric_subdirs:
             experiment_id = max(numeric_subdirs) + 1
     
+    # 创建实验主目录
     experiment_dir = os.path.join(base_dir, str(experiment_id))
     if not os.path.exists(experiment_dir):
         os.makedirs(experiment_dir)
+    
+    # 创建日志目录（在实验ID目录下）
+    log_dir = os.path.join(experiment_dir, 'logs')
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
 
     # 在此目录下也设置日志记录到文件
-    setup_logger(log_dir=experiment_dir, log_filename="experiment.log")
+    setup_logger(log_dir=log_dir, log_filename="experiment.log")
 
     logger.info(f"Experiment ID: {experiment_id}")
     logger.info(f"Saving results to: {experiment_dir}")
     
-    return experiment_dir, experiment_id
+    return experiment_id
 
-def run_simulation_batch(G, args, experiment_dir, experiment_id, dataset_name):
+def run_simulation_batch(G, args, experiment_id, dataset_name):
     """
     运行批量仿真。
     
     Args:
         G (nx.Graph): 原始图。
         args (argparse.Namespace): 参数。
-        experiment_dir (str): 结果保存目录。
         experiment_id (int): 实验 ID。
         dataset_name (str): 数据集名称。
         
@@ -161,51 +151,76 @@ def run_simulation_batch(G, args, experiment_dir, experiment_id, dataset_name):
     cover_rate = args.rate
     batch_size = args.batch_size
     current_attack_mode = args.attack
-    metric_type = args.metric
     
-    logger.info(f"Nodes: {node_num}, Edges: {edge_num}")
+    # 定义所有指标类型
+    metric_types = ['lcc', 'csa', 'cce', 'wcp']
     
-    x_values = {
-        "Baseline": [],
-        "RCP": [],
-        "Bi-level": [],
-        "Bimodal+Random": [],
-        "Random+RL": [],
-        "GA+RL": [],
-        "Onion+Ra": [],
-        "Onion+RL": [],
-        "SOLO+Ra": [],
-        "SOLO+RL": [],
-        "ROMEN+Ra": [],
-        "ROMEN+RL": [],
-        "BimodalRL": [],
-        "UNITY+Ra": [],
-        "UNITY+RL": []
-    }
+    # 创建实验主目录：results/{dataset}/{attack_mode}/{experiment_id}/
+    experiment_base_dir = os.path.join('results', dataset_name, current_attack_mode, str(experiment_id))
+    if not os.path.exists(experiment_base_dir):
+        os.makedirs(experiment_base_dir)
     
-    r_values = {
-        "Baseline": [],
-        "RCP": [],
-        "Bi-level": [],
-        "Bimodal+Random": [],
-        "Random+RL": [],
-        "GA+RL": [],
-        "Onion+Ra": [],
-        "Onion+RL": [],
-        "SOLO+Ra": [],
-        "SOLO+RL": [],
-        "ROMEN+Ra": [],
-        "ROMEN+RL": [],
-        "BimodalRL": [],
-        "UNITY+Ra": [],
-        "UNITY+RL": []
-    }
+    # 为每个指标类型在实验目录下创建子目录
+    metric_dirs = {}
+    for metric_type in metric_types:
+        metric_dir = os.path.join(experiment_base_dir, metric_type)
+        if not os.path.exists(metric_dir):
+            os.makedirs(metric_dir)
+        metric_dirs[metric_type] = metric_dir
+    
+    # 创建extradata目录（用于保存每次迭代的详细曲线）
+    extra_data_dir = os.path.join(experiment_base_dir, "extradata")
+    if not os.path.exists(extra_data_dir):
+        os.makedirs(extra_data_dir)
+    
+    # 共同目录（用于保存运行时间等共同指标）- 保持在attack_mode级别
+    common_dir = os.path.join('results', dataset_name, current_attack_mode)
+    if not os.path.exists(common_dir):
+        os.makedirs(common_dir)
+    
+    # 精简日志：只输出关键信息
+    # logger.info(f"Nodes: {node_num}, Edges: {edge_num}")
+    
+    # 为每个指标类型初始化 x_values 和 r_values
+    x_values_by_metric = {}
+    r_values_by_metric = {}
+    
+    for metric_type in metric_types:
+        x_values_by_metric[metric_type] = {
+            "Baseline": [],
+            "RCP": [],
+            "Bi-level": [],
+            "GA+RL": [],
+            "Onion+Ra": [],
+            "Onion+RL": [],
+            "ROMEN+Ra": [],
+            "ROMEN+RL": [],
+            "BimodalRL": [],
+            "UNITY+Ra": [],
+            "UNITY+RL": []
+        }
+        
+        r_values_by_metric[metric_type] = {
+            "Baseline": [],
+            "RCP": [],
+            "Bi-level": [],
+            "GA+RL": [],
+            "Onion+Ra": [],
+            "Onion+RL": [],
+            "ROMEN+Ra": [],
+            "ROMEN+RL": [],
+            "BimodalRL": [],
+            "UNITY+Ra": [],
+            "UNITY+RL": []
+        }
     
     plot_flag = True
     
     global_metrics_summary = {}
     
-    logger.info(f"Starting {batch_size} simulations...")
+    # 精简日志：只在开始时输出一次
+    if batch_size > 0:
+        logger.info(f"Starting experiment: {dataset_name}, attack={current_attack_mode}, batch_size={batch_size}")
     
     # 记录运行时间
     execution_times = {}
@@ -225,7 +240,8 @@ def run_simulation_batch(G, args, experiment_dir, experiment_id, dataset_name):
         
         start_time = time.time()
         # G3 = construct_Two(G, cover_rate)
-        G3 = construct_Two_MaxK1(G)
+        # G3 = construct_Two_MaxK1(G)
+        G3 = create_bimodal_network_exact(G)
         execution_times.setdefault("Construct_Two", []).append(time.time() - start_time)
         
         start_time = time.time()
@@ -266,52 +282,53 @@ def run_simulation_batch(G, args, experiment_dir, experiment_id, dataset_name):
             "G9": G9  # UNITY 优化
         }
         
-        # 第一次迭代时打印拓扑信息
+        # 精简日志：第一次迭代时只打印关键拓扑信息
         if ijk == 0:
+            # 只打印原始拓扑和核心方法（Bi-level）的拓扑信息
             print_topology_info("Original (Baseline/RCP)", G)
-            print_topology_info("Random (G1 - 随机部署)", G1)
-            print_topology_info("Scale-Free (G2)", G2)
-            print_topology_info("Bimodal (G3 - 双层构造/RL-RCP)", G3)
-            print_topology_info("GA Optimized (G4 - 混合指标)", G4)
-            print_topology_info("ONION Optimized (G5 - ONION)", G5)
-            print_topology_info("SOLO Optimized (G6 - SOLO)", G6)
-            print_topology_info("ROMEN Optimized (G7 - ROMEN)", G7)
-            print_topology_info("BimodalRL Optimized (G8 - BimodalRL)", G8)
-            print_topology_info("UNITY Optimized (G9 - UNITY)", G9)
+            print_topology_info("Bimodal (G3 - Bi-level)", G3)
         
         manager = ControllerManager(all_G, cover_rate, node_num, dataset_name, experiment_id)
         
         # 记录仿真时间（包含攻击和评估）
         sim_start_time = time.time()
-        x_values = manager._run_specific_attack(current_attack_mode, x_values, r_values, ijk, plot_flag, metric_type, save_dir=experiment_dir)
-        execution_times.setdefault("Simulation_Run", []).append(time.time() - sim_start_time)
         
+        # 运行攻击仿真，为所有指标类型计算数据
+        manager._run_specific_attack_multi_metric(
+            current_attack_mode, 
+            x_values_by_metric, 
+            r_values_by_metric, 
+            ijk, 
+            plot_flag, 
+            metric_types,
+            metric_dirs
+        )
+        
+        execution_times.setdefault("Simulation_Run", []).append(time.time() - sim_start_time)
         execution_times.setdefault("Total_Iteration", []).append(time.time() - iter_start_time)
 
-        # 额外保存每次迭代的 nn:x_val 数据
-        
-        # 额外保存每次迭代的 nn:x_val 数据
+        # 额外保存每次迭代的曲线数据
         if hasattr(manager, 'metrics_summary'):
-            # 创建 extradata 目录
-            extra_data_dir = os.path.join(experiment_dir, "extradata")
-            if not os.path.exists(extra_data_dir):
-                os.makedirs(extra_data_dir)
-            
             # 保存当前迭代的曲线数据
             import pandas as pd
             for name, metrics_list in manager.metrics_summary.items():
                 # metrics_list 中应该只有一项（当前迭代的）
                 current_metric = metrics_list[-1]
-                x_curve = current_metric.get('X_Curve', [])
-                y_curve = current_metric.get('Y_Curve', [])
                 
-                if x_curve and y_curve:
-                    df = pd.DataFrame({'x_val': x_curve, 'nn': y_curve})
-                    # 文件名格式: method_iter_attack.csv
-                    # 由于这里是在 batch 循环中，我们需要 ijk
-                    filename = f"{name}_iter{ijk}_{current_attack_mode}.csv"
-                    filepath = os.path.join(extra_data_dir, filename)
-                    df.to_csv(filepath, index=False) 
+                # 保存所有指标的曲线数据
+                for metric_type in metric_types:
+                    curve_key = f'{metric_type.upper()}_Curve'
+                    curve_data = current_metric.get(curve_key, [])
+                    
+                    if curve_data:
+                        x_curve = [point[1] for point in curve_data]
+                        y_curve = [point[0] for point in curve_data]
+                        
+                        df = pd.DataFrame({'x_val': x_curve, 'y_val': y_curve})
+                        # 文件名格式: method_iter_attack_metric.csv
+                        filename = f"{name}_iter{ijk}_{current_attack_mode}_{metric_type}.csv"
+                        filepath = os.path.join(extra_data_dir, filename)
+                        df.to_csv(filepath, index=False)
         
         # 收集本轮的综合指标
         if hasattr(manager, 'metrics_summary'):
@@ -320,13 +337,25 @@ def run_simulation_batch(G, args, experiment_dir, experiment_id, dataset_name):
                     global_metrics_summary[name] = []
                 global_metrics_summary[name].extend(metrics_list)
 
-    save_comprehensive_metrics(global_metrics_summary, experiment_dir, current_attack_mode)
+    # 保存综合指标到实验主目录
+    save_comprehensive_metrics(global_metrics_summary, experiment_base_dir, current_attack_mode)
     
-    # 保存运行时间记录
+    # 保存运行时间记录到共同目录
     if execution_times:
-        save_execution_times(execution_times, experiment_dir)
+        save_execution_times(execution_times, common_dir)
+    
+    # 为每个指标类型保存结果
+    for metric_type in metric_types:
+        save_and_plot_results(
+            x_values_by_metric[metric_type], 
+            r_values_by_metric[metric_type], 
+            dataset_name, 
+            current_attack_mode, 
+            experiment_id, 
+            metric_dirs[metric_type]
+        )
         
-    return x_values, r_values
+    return x_values_by_metric['lcc'], r_values_by_metric['lcc']
 
 def save_and_plot_results(x_values, r_values, dataset_name, attack_mode, experiment_id, experiment_dir):
     """
@@ -385,13 +414,10 @@ def main():
         return
         
     # 3. 设置实验目录（并切换日志记录到该目录下的文件）
-    experiment_dir, experiment_id = setup_experiment_dir(dataset_name, args.attack, args.metric)
+    experiment_id = setup_experiment_dir(dataset_name, args.attack)
     
     # 4. 运行仿真
-    x_values, r_values = run_simulation_batch(G, args, experiment_dir, experiment_id, dataset_name)
-    
-    # 5. 保存并绘制结果
-    save_and_plot_results(x_values, r_values, dataset_name, args.attack, experiment_id, experiment_dir)
+    x_values, r_values = run_simulation_batch(G, args, experiment_id, dataset_name)
     
     logger.info("Task completed.")
 

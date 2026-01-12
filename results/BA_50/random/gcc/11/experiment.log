@@ -1,5 +1,0 @@
-2026-01-08 17:18:56 - root - INFO - Logger initialized. Log file: results\BA_50\random\gcc\11\experiment.log
-2026-01-08 17:18:56 - __main__ - INFO - Experiment ID: 11
-2026-01-08 17:18:56 - __main__ - INFO - Saving results to: results\BA_50\random\gcc\11
-2026-01-08 17:18:56 - __main__ - INFO - Nodes: 50, Edges: 141
-2026-01-08 17:18:56 - __main__ - INFO - Starting 1 simulations...

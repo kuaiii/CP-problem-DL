@@ -4,9 +4,18 @@ import networkx as nx
 import random
 import itertools
 from src.metrics.metrics import get_shortest_dist
+from src.utils.gpu_utils import (
+    is_gpu_available, to_tensor, to_numpy, 
+    compute_shortest_paths_from_sources_gpu, gpu_greedy_selection,
+    TORCH_AVAILABLE, CUDA_AVAILABLE, DEVICE
+)
 from tqdm import tqdm
 import numpy as np
 from math import ceil
+
+# 如果 PyTorch 可用，导入
+if TORCH_AVAILABLE:
+    import torch
 
 # Try to import louvain_communities
 try:
@@ -257,7 +266,18 @@ def k_median_opt(G, points, is_weight):
     return best_center
 
 def k_median_vectorized(G, points, controller_num, is_weight):
-    # 优化后的k_median算法：使用矩阵运算加速和预计算距离
+    """
+    优化后的 k-median 算法：使用 GPU 加速矩阵运算和预计算距离
+    
+    Args:
+        G: NetworkX 图对象
+        points: 候选节点列表
+        controller_num: 要选择的控制器数量
+        is_weight: 是否考虑边权重
+        
+    Returns:
+        list: 选中的控制器节点列表
+    """
     nodes_list = list(G.nodes())
     node_to_idx = {node: i for i, node in enumerate(nodes_list)}
     num_nodes = len(nodes_list)
@@ -265,38 +285,58 @@ def k_median_vectorized(G, points, controller_num, is_weight):
     points_list = list(points)
     num_candidates = len(points_list)
     
-    dist_matrix = np.full((num_candidates, num_nodes), np.inf)
-    
-    for i, candidate in enumerate(tqdm(points_list, desc="Pre-calculating Paths", leave=False)):
-        if is_weight:
-            dists = nx.single_source_dijkstra_path_length(G, candidate, weight='weight')
-        else:
-            dists = nx.single_source_shortest_path_length(G, candidate)
+    # 使用 GPU 或 CPU 预计算距离矩阵
+    if is_gpu_available():
+        # GPU 加速版本
+        dist_matrix = np.full((num_candidates, num_nodes), np.inf, dtype=np.float32)
         
-        for target_node, d in dists.items():
-            if target_node in node_to_idx:
-                dist_matrix[i, node_to_idx[target_node]] = d
-                
-    current_min_dists = np.full(num_nodes, np.inf)
-    
-    selected_indices = []
-    remaining_indices = set(range(num_candidates))
-    
-    for _ in tqdm(range(controller_num), desc="Selecting Controllers", leave=False):
-        if not remaining_indices:
-            break
+        # 批量计算最短路径
+        for i, candidate in enumerate(tqdm(points_list, desc="Pre-calculating Paths (GPU)", leave=False)):
+            if is_weight:
+                dists = nx.single_source_dijkstra_path_length(G, candidate, weight='weight')
+            else:
+                dists = nx.single_source_shortest_path_length(G, candidate)
+            
+            for target_node, d in dists.items():
+                if target_node in node_to_idx:
+                    dist_matrix[i, node_to_idx[target_node]] = d
+        
+        # 使用 GPU 进行贪婪选择
+        selected_indices = gpu_greedy_selection(dist_matrix, controller_num)
+    else:
+        # CPU 版本 (原始实现)
+        dist_matrix = np.full((num_candidates, num_nodes), np.inf)
+        
+        for i, candidate in enumerate(tqdm(points_list, desc="Pre-calculating Paths", leave=False)):
+            if is_weight:
+                dists = nx.single_source_dijkstra_path_length(G, candidate, weight='weight')
+            else:
+                dists = nx.single_source_shortest_path_length(G, candidate)
+            
+            for target_node, d in dists.items():
+                if target_node in node_to_idx:
+                    dist_matrix[i, node_to_idx[target_node]] = d
+                    
+        current_min_dists = np.full(num_nodes, np.inf)
+        
+        selected_indices = []
+        remaining_indices = set(range(num_candidates))
+        
+        for _ in tqdm(range(controller_num), desc="Selecting Controllers", leave=False):
+            if not remaining_indices:
+                break
 
-        rem_indices_list = list(remaining_indices)
-        candidate_dists = dist_matrix[rem_indices_list] 
-        new_dists = np.minimum(candidate_dists, current_min_dists)
-        total_dists = np.sum(new_dists, axis=1)
-        
-        min_idx_in_rem = np.argmin(total_dists)
-        best_candidate_idx = rem_indices_list[min_idx_in_rem]
-        
-        selected_indices.append(best_candidate_idx)
-        remaining_indices.remove(best_candidate_idx)
-        current_min_dists = np.minimum(current_min_dists, dist_matrix[best_candidate_idx])
+            rem_indices_list = list(remaining_indices)
+            candidate_dists = dist_matrix[rem_indices_list] 
+            new_dists = np.minimum(candidate_dists, current_min_dists)
+            total_dists = np.sum(new_dists, axis=1)
+            
+            min_idx_in_rem = np.argmin(total_dists)
+            best_candidate_idx = rem_indices_list[min_idx_in_rem]
+            
+            selected_indices.append(best_candidate_idx)
+            remaining_indices.remove(best_candidate_idx)
+            current_min_dists = np.minimum(current_min_dists, dist_matrix[best_candidate_idx])
         
     return [points_list[i] for i in selected_indices]
 
@@ -395,41 +435,28 @@ E_RCP = RCP
 # ----------------- Other Strategies -----------------
 
 def random_select_controllers(G, controller_rate):
-    # Fixed: Use global rate limit strictly
+    """
+    选择度最高的节点作为控制器（原名为随机选择，已修改为基于度的选择）
+    
+    策略：选择度数最高的 rate 比例节点作为控制器
+    
+    Args:
+        G (nx.Graph): 网络拓扑
+        controller_rate (float): 控制器比例
+        
+    Returns:
+        list: 选中的控制器节点列表
+    """
     total_nodes = G.number_of_nodes()
     total_controllers_budget = ceil(total_nodes * controller_rate)
     
-    # To maintain consistency with connectivity, we still prefer distributing across components
-    # but we must enforce the exact total count.
+    # 获取所有节点的度数，并按度数降序排序
+    node_degrees = [(node, G.degree(node)) for node in G.nodes()]
+    node_degrees.sort(key=lambda x: x[1], reverse=True)
     
-    communities = list(nx.connected_components(G))
-    all_nodes = list(G.nodes())
+    # 选择度数最高的 total_controllers_budget 个节点
+    controllers = [node for node, degree in node_degrees[:total_controllers_budget]]
     
-    # If graph is fully connected, just sample random
-    if len(communities) == 1:
-        return random.sample(all_nodes, total_controllers_budget)
-        
-    # If fragmented, try to cover components first then fill up
-    controllers = []
-    
-    # 1. Pick 1 from each component if possible
-    communities.sort(key=len, reverse=True)
-    
-    for comp in communities:
-        if len(controllers) < total_controllers_budget:
-            controllers.append(random.choice(list(comp)))
-            
-    # 2. Fill remainder from all nodes excluding already picked
-    while len(controllers) < total_controllers_budget:
-        remaining_choices = list(set(all_nodes) - set(controllers))
-        if not remaining_choices: break
-        controllers.append(random.choice(remaining_choices))
-        
-    # 3. If we picked too many (budget < components), trim random ones
-    # (Though logic above prevents this, but for safety)
-    if len(controllers) > total_controllers_budget:
-        controllers = random.sample(controllers, total_controllers_budget)
-        
     return controllers
 
 def get_furthest_distance(G, nodes):

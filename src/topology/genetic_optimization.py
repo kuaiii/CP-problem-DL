@@ -6,6 +6,17 @@ from scipy.linalg import eig
 import logging
 from src.utils.logger import get_logger
 
+# GPU 加速支持
+try:
+    import torch
+    TORCH_AVAILABLE = True
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        print(f"[GA] GPU 加速已启用: {torch.cuda.get_device_name(0)}")
+except ImportError:
+    TORCH_AVAILABLE = False
+    DEVICE = None
+
 logger = get_logger(__name__)
 
 class GeneticAlgorithm:
@@ -142,19 +153,40 @@ class GeneticAlgorithm:
     
     def optimize(self):
         """
-        执行遗传算法优化。
+        执行遗传算法优化 - 带早停和进度显示。
         """
+        from tqdm import tqdm
+        
         population = self.initialize_population()
         best_fitness = float('-inf')
         best_solution = None
+        
+        # 早停参数
+        no_improvement_count = 0
+        early_stop_patience = 50  # 连续50代无改进则停止
+        
+        pbar = tqdm(range(self.max_generations), desc="GA Optimization")
 
-        for generation in range(self.max_generations):
+        for generation in pbar:
             fitness_scores = self.evaluate_population(population)
             
             max_fitness_idx = np.argmax(fitness_scores)
-            if fitness_scores[max_fitness_idx] > best_fitness:
-                best_fitness = fitness_scores[max_fitness_idx]
-                best_solution = population[max_fitness_idx]
+            current_best = fitness_scores[max_fitness_idx]
+            
+            if current_best > best_fitness:
+                best_fitness = current_best
+                best_solution = population[max_fitness_idx].copy()
+                no_improvement_count = 0
+            else:
+                no_improvement_count += 1
+            
+            # 更新进度条
+            pbar.set_postfix({'fitness': f'{best_fitness:.4f}', 'no_imp': no_improvement_count})
+            
+            # 早停检查
+            if no_improvement_count >= early_stop_patience:
+                logger.info(f"Early stopping at generation {generation}")
+                break
             
             new_population = []
             for _ in range(self.population_size // 2):
@@ -170,35 +202,62 @@ class GeneticAlgorithm:
 
 class ResilienceNetworkOptimizer():
     """
-    网络鲁棒性优化器（计算适应度）。
+    网络鲁棒性优化器（计算适应度）- GPU 加速版本。
     """
     def __init__(self, N, L, alpha, beta):
         self.nodes = N
         self.edges = L
         self.alpha = alpha
         self.beta = beta
+        self.use_gpu = TORCH_AVAILABLE and torch.cuda.is_available() and N <= 500
+        
+        # 缓存机制
+        self._nc_cache = {}
+        self._cache_hits = 0
+        self._cache_misses = 0
         
         full_adj = np.ones((self.nodes, self.nodes)) - np.eye(self.nodes)
         self.nc_max = self.calculate_natural_connectivity(full_adj)
         self.mu_max = self.calculate_degree_variance(full_adj)
     
+    def _matrix_hash(self, adj_matrix):
+        """计算邻接矩阵的哈希值用于缓存"""
+        # 使用稀疏表示的哈希
+        return hash(adj_matrix.tobytes())
+    
     def calculate_natural_connectivity(self, adj_matrix):
         """
-        计算自然连通度 (Natural Connectivity)。
+        计算自然连通度 (Natural Connectivity) - GPU 加速版本。
+        使用缓存避免重复计算。
         """
+        # 检查缓存
+        matrix_hash = self._matrix_hash(adj_matrix)
+        if matrix_hash in self._nc_cache:
+            self._cache_hits += 1
+            return self._nc_cache[matrix_hash]
+        
+        self._cache_misses += 1
+        
         adj_matrix = adj_matrix.astype(np.float64)
         try:
-            if self.nodes <= 100: 
-                eigenvalues = eig(adj_matrix, left=False, right=False)
+            if self.use_gpu and self.nodes <= 300:
+                # GPU 加速版本
+                adj_tensor = torch.tensor(adj_matrix, dtype=torch.float64, device=DEVICE)
+                eigenvalues = torch.linalg.eigvalsh(adj_tensor.float())  # 使用对称矩阵特化算法
+                evals = eigenvalues.cpu().numpy()
             else:
-                try:
-                    eigenvalues = eig(adj_matrix, left=False, right=False)
-                except:
-                    eigenvalues = eig(adj_matrix, left=False, right=False)
+                # CPU 版本
+                eigenvalues = eig(adj_matrix, left=False, right=False)
+                evals = eigenvalues.real
 
-            evals = eigenvalues.real
             max_eval = np.max(evals)
+            # 数值稳定的 log-sum-exp
             nc = max_eval + np.log(np.sum(np.exp(evals - max_eval))) - np.log(len(evals))
+            
+            # 存入缓存（限制缓存大小）
+            if len(self._nc_cache) < 10000:
+                self._nc_cache[matrix_hash] = nc
+            
             return nc
         except Exception as e:
             logger.error(f"Error calculating NC: {e}")
@@ -215,12 +274,19 @@ class ResilienceNetworkOptimizer():
     
     def calculate_degree_variance(self, adj_matrix):
         """
-        计算度方差。
+        计算度方差 - 向量化版本。
         """
-        degrees = np.sum(adj_matrix, axis=1)
-        mean_degree = np.mean(degrees)
-        degree_variance = np.mean((degrees - mean_degree) ** 2)
-        return degree_variance
+        if self.use_gpu:
+            adj_tensor = torch.tensor(adj_matrix, dtype=torch.float32, device=DEVICE)
+            degrees = torch.sum(adj_tensor, dim=1)
+            mean_degree = torch.mean(degrees)
+            degree_variance = torch.mean((degrees - mean_degree) ** 2)
+            return degree_variance.item()
+        else:
+            degrees = np.sum(adj_matrix, axis=1)
+            mean_degree = np.mean(degrees)
+            degree_variance = np.mean((degrees - mean_degree) ** 2)
+            return degree_variance
     
     def evaluate_network(self, adj_matrix):
         """
@@ -241,16 +307,20 @@ class ResilienceNetworkOptimizer():
                 (1-self.alpha-self.beta) * (mu/mu_max))
         return fitness
 
-def solution(nodes, edges):
+def solution(nodes, edges, max_generations=100, population_size=8):
     """
-    GA 优化入口函数。
+    GA 优化入口函数 - 优化版本。
+    
+    Args:
+        nodes: 节点数
+        edges: 边数
+        max_generations: 最大代数 (默认100，配合早停)
+        population_size: 种群大小 (默认8)
     """
-    population_size = 10
-    max_generations = 300
     mutation_rate = 0.2
     alpha = 0.4
     beta = 0.4
-    logger.info("  Optimizing Network Structure using Genetic Algorithm")
+    logger.info(f"  Optimizing Network Structure using GA (nodes={nodes}, edges={edges})")
     evaluator = ResilienceNetworkOptimizer(
         N=nodes,
         L=edges,
@@ -266,4 +336,11 @@ def solution(nodes, edges):
         edges=edges
     )
     best_solution, best_fitness = ga.optimize()
+    
+    # 打印缓存统计
+    if hasattr(evaluator, '_cache_hits'):
+        total = evaluator._cache_hits + evaluator._cache_misses
+        if total > 0:
+            logger.info(f"  NC Cache: {evaluator._cache_hits}/{total} hits ({100*evaluator._cache_hits/total:.1f}%)")
+    
     return best_solution, best_fitness

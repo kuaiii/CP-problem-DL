@@ -45,7 +45,7 @@ def plot_line(x_ran, y_ran, x_tar, y_tar):
     plt.legend()
     plt.show()
 
-def plot_different_topo(nums, X, Y, colors, linestyles, markers, labels, number, name, save_dir):
+def plot_different_topo(nums, X, Y, colors, linestyles, markers, labels, number, name, save_dir, y_label="Resilience"):
     """
     绘制不同拓扑或部署策略下的鲁棒性对比折线图。
     这是生成 "攻击0.png" 等核心结果图的函数。
@@ -61,6 +61,7 @@ def plot_different_topo(nums, X, Y, colors, linestyles, markers, labels, number,
         number (int): 当前迭代编号，用于文件名后缀。
         name (str): 图表标题/文件名前缀（如 "定向攻击"）。
         save_dir (str): 保存目录。
+        y_label (str): Y轴标签，默认为"Resilience"。
     """
     # 临时设置默认字体以避免在设置特定中文字体前的警告
     rcParams['font.family'] = 'sans-serif'
@@ -81,7 +82,9 @@ def plot_different_topo(nums, X, Y, colors, linestyles, markers, labels, number,
                 color=colors[i],
                 linestyle=linestyles[i],
                 marker=markers[i],
-                label=labels[i])
+                label=labels[i],
+                markersize=4,  # 减小标记大小
+                linewidth=1.5)
 
     # 设置 X 轴主刻度间隔为 0.2
     x_major_locator = MultipleLocator(0.2)
@@ -89,10 +92,10 @@ def plot_different_topo(nums, X, Y, colors, linestyles, markers, labels, number,
     ax.set_xlim(0, 1)
 
     ax.set_xlabel("Proportion of Removed Nodes : f", fontsize=12)
-    ax.set_ylabel("Resilience", fontsize=12)
+    ax.set_ylabel(y_label, fontsize=12)
     
-    # 设置图例
-    ax.legend()
+    # 设置图例（缩小）
+    ax.legend(fontsize=8, loc='best', framealpha=0.9)
 
     # 构建保存路径
     if not os.path.exists(save_dir):
@@ -123,8 +126,8 @@ def plot_bar_chart(data_dict, y_label, save_dir, filename):
     colors = ['#4C72B0', '#55A868', '#C44E52', '#8172B3', '#CCB974', '#64B5CD', '#8C8C8C', '#E377C2', '#BCBD22', '#17BECF', '#FF7F0E', '#2CA02C', '#D62728', '#9467BD', '#8C564B']
     markers = ['o', 's', '^', 'D', 'v', '+', '*', 'x', 'p', 'h', '1', '2', '3', '4', '8']
     
-    # 定义标准的显示顺序，确保柱状图按逻辑排列
-    labels = ["Baseline", "RCP", "Bi-level", "Bimodal+Random", "Random+RL", "GA+RL", "Onion+Ra", "Onion+RL", "SOLO+Ra", "SOLO+RL", "ROMEN+Ra", "ROMEN+RL", "BimodalRL", "UNITY+Ra", "UNITY+RL"]
+    # 定义标准的显示顺序，确保柱状图按逻辑排列（已删除 Random+RL, Bimodal+Random, SOLO+Ra, SOLO+RL）
+    labels = ["Baseline", "RCP", "Bi-level", "GA+RL", "Onion+Ra", "Onion+RL", "ROMEN+Ra", "ROMEN+RL", "BimodalRL", "UNITY+Ra", "UNITY+RL"]
     
     # 提取数据
     xvalues_list = []
@@ -200,8 +203,8 @@ def plot_box_chart(data_dict, y_label, save_dir, filename):
         'axes.facecolor': '#f8f9fa'
     })
     
-    colors = ['#4C72B0', '#55A868', '#C44E52', '#8172B3', '#CCB974', '#64B5CD', '#8C8C8C', '#E377C2', '#BCBD22', '#17BECF', '#FF7F0E', '#2CA02C', '#D62728', '#9467BD', '#8C564B']
-    labels = ["Baseline", "RCP", "Bi-level", "Bimodal+Random", "Random+RL", "GA+RL", "Onion+Ra", "Onion+RL", "SOLO+Ra", "SOLO+RL", "ROMEN+Ra", "ROMEN+RL", "BimodalRL", "UNITY+Ra", "UNITY+RL"]
+    colors = ['#4C72B0', '#55A868', '#C44E52', '#8172B3', '#CCB974', '#64B5CD', '#8C8C8C', '#E377C2', '#BCBD22', '#17BECF', '#FF7F0E']
+    labels = ["Baseline", "RCP", "Bi-level", "GA+RL", "Onion+Ra", "Onion+RL", "ROMEN+Ra", "ROMEN+RL", "BimodalRL", "UNITY+Ra", "UNITY+RL"]
     
     plot_data = []
     plot_labels = []

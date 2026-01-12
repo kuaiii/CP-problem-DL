@@ -258,12 +258,19 @@ class NetworkTopology:
             logger.error(f"图性质验证时发生异常: {e}")
             return False
     
-    def calculate_robustness_RG(self):
-        """计算鲁棒性指标RG - 优化版本"""
+    def calculate_robustness_RG(self, sample_ratio=0.3):
+        """
+        计算鲁棒性指标RG - 采样优化版本。
+        不需要模拟移除所有节点，只采样一部分来估算。
+        """
         graph_copy = self.graph.copy()
         total_robustness = 0
+        steps = 0
         
-        while graph_copy.number_of_nodes() > 0:
+        # 只采样 sample_ratio 比例的节点进行模拟
+        max_steps = max(5, int(self.num_nodes * sample_ratio))
+        
+        while graph_copy.number_of_nodes() > 0 and steps < max_steps:
             # 计算当前最大连通分量
             if graph_copy.number_of_edges() > 0:
                 components = list(nx.connected_components(graph_copy))
@@ -272,6 +279,7 @@ class NetworkTopology:
                 max_component_size = 1 if graph_copy.number_of_nodes() == 1 else 0
             
             total_robustness += max_component_size / self.num_nodes
+            steps += 1
             
             # 移除度数最高的节点
             if graph_copy.number_of_nodes() > 0:
@@ -282,7 +290,8 @@ class NetworkTopology:
                 else:
                     break
         
-        return total_robustness / (self.num_nodes + 1)
+        # 归一化：使用实际步数而不是总节点数
+        return total_robustness / (steps + 1) if steps > 0 else 0
 
 class ReplayBuffer:
     """经验回放缓冲区"""
@@ -747,14 +756,15 @@ class ROHEMOptimizer:
         except:
             return agent
 
-def construct_romen(G):
+def construct_romen(G, generations=20):
     """
     构建 ROMEN 结构的优化网络 (G6)
+    优化版本：减少代数，加快收敛。
     """
-    logger.info("  Starting ROMEN Structure Optimization...")
+    logger.info("  Starting ROMEN Structure Optimization (Optimized)...")
     optimizer = ROHEMOptimizer(
-        population_size=3,
-        generations=30, # 可根据需要调整
+        population_size=2,  # 减少种群大小
+        generations=generations,
         verbose=True
     )
     G_romen = optimizer.optimize_topology(

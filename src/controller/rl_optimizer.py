@@ -14,6 +14,11 @@ from src.metrics.metrics import calculate_csa, calculate_control_entropy, calcul
 
 logger = get_logger(__name__)
 
+# 设置默认设备
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if torch.cuda.is_available():
+    logger.info(f"[RL] 使用 GPU: {torch.cuda.get_device_name(0)}")
+
 # Import K-Median helper from strategies (we will need to move it or import carefully to avoid circular deps)
 # To avoid circular imports, I will re-implement a localized k_median_vectorized or similar here.
 
@@ -21,6 +26,8 @@ def k_median_vectorized_subset(G, points, num_to_select, pre_selected, is_weight
     """
     在已选定 pre_selected 节点作为中心的情况下，从 points 中再选择 num_to_select 个节点，
     以最小化距离和。
+    
+    支持 GPU 加速计算
     """
     if num_to_select <= 0:
         return []
@@ -36,8 +43,11 @@ def k_median_vectorized_subset(G, points, num_to_select, pre_selected, is_weight
     
     if num_candidates == 0:
         return []
+    
+    # 检查是否使用 GPU
+    use_gpu = torch.cuda.is_available() and num_candidates > 50
         
-    dist_matrix = np.full((num_candidates, num_nodes), np.inf)
+    dist_matrix = np.full((num_candidates, num_nodes), np.inf, dtype=np.float32)
     
     # 预计算候选节点的距离
     for i, candidate in enumerate(points_list):
@@ -51,7 +61,7 @@ def k_median_vectorized_subset(G, points, num_to_select, pre_selected, is_weight
                 dist_matrix[i, node_to_idx[target_node]] = d
                 
     # 基于已选节点初始化当前最小距离
-    current_min_dists = np.full(num_nodes, np.inf)
+    current_min_dists = np.full(num_nodes, np.inf, dtype=np.float32)
     
     if pre_selected:
         for center in pre_selected:
@@ -66,24 +76,47 @@ def k_median_vectorized_subset(G, points, num_to_select, pre_selected, is_weight
                     if d < current_min_dists[idx]:
                         current_min_dists[idx] = d
     
-    selected_indices = []
-    remaining_indices = set(range(num_candidates))
-    
-    for _ in range(num_to_select):
-        if not remaining_indices:
-            break
+    if use_gpu:
+        # GPU 加速版本
+        dist_tensor = torch.tensor(dist_matrix, dtype=torch.float32, device=DEVICE)
+        current_min_tensor = torch.tensor(current_min_dists, dtype=torch.float32, device=DEVICE)
+        
+        selected_indices = []
+        remaining_mask = torch.ones(num_candidates, dtype=torch.bool, device=DEVICE)
+        
+        for _ in range(num_to_select):
+            if not remaining_mask.any():
+                break
+            
+            # 计算选择每个候选后的新最小距离
+            new_dists = torch.minimum(dist_tensor, current_min_tensor.unsqueeze(0))
+            totals = torch.sum(new_dists, dim=1)
+            totals[~remaining_mask] = float('inf')
+            
+            best_idx = torch.argmin(totals).item()
+            selected_indices.append(best_idx)
+            remaining_mask[best_idx] = False
+            current_min_tensor = torch.minimum(dist_tensor[best_idx], current_min_tensor)
+    else:
+        # CPU 版本
+        selected_indices = []
+        remaining_indices = set(range(num_candidates))
+        
+        for _ in range(num_to_select):
+            if not remaining_indices:
+                break
 
-        rem_indices_list = list(remaining_indices)
-        candidate_dists = dist_matrix[rem_indices_list] 
-        new_dists = np.minimum(candidate_dists, current_min_dists)
-        total_dists = np.sum(new_dists, axis=1)
-        
-        min_idx_in_rem = np.argmin(total_dists)
-        best_candidate_idx = rem_indices_list[min_idx_in_rem]
-        
-        selected_indices.append(best_candidate_idx)
-        remaining_indices.remove(best_candidate_idx)
-        current_min_dists = np.minimum(current_min_dists, dist_matrix[best_candidate_idx])
+            rem_indices_list = list(remaining_indices)
+            candidate_dists = dist_matrix[rem_indices_list] 
+            new_dists = np.minimum(candidate_dists, current_min_dists)
+            total_dists = np.sum(new_dists, axis=1)
+            
+            min_idx_in_rem = np.argmin(total_dists)
+            best_candidate_idx = rem_indices_list[min_idx_in_rem]
+            
+            selected_indices.append(best_candidate_idx)
+            remaining_indices.remove(best_candidate_idx)
+            current_min_dists = np.minimum(current_min_dists, dist_matrix[best_candidate_idx])
         
     return [points_list[i] for i in selected_indices]
 
@@ -328,15 +361,20 @@ def predict(G, k, model=None, model_path=None):
         if model_path is None:
             model_path = 'models/rl_agent.pth'
         model = load_or_train_model(model_path)
-        
+    
+    # 将模型移动到 GPU
+    model = model.to(DEVICE)
     model.eval()
     
     x, node_list = get_node_features(G)
     if len(node_list) == 0:
         return []
+    
+    # 将输入数据移动到 GPU
+    x = x.to(DEVICE)
         
     selected_indices = []
-    mask = torch.zeros(len(node_list), dtype=torch.bool)
+    mask = torch.zeros(len(node_list), dtype=torch.bool, device=DEVICE)
     
     with torch.no_grad():
         for _ in range(k):
@@ -454,15 +492,17 @@ def hybrid_rl_select(G, total_controllers_budget, model_path='models/rl_agent.pt
     return final_controllers
 
 def evaluate(model, graphs, mode='combined'):
+    model = model.to(DEVICE)
     model.eval()
     total_reward = 0
     with torch.no_grad():
         for G in graphs:
             if G.number_of_nodes() < 2: continue
             x, node_list = get_node_features(G)
+            x = x.to(DEVICE)
             # 用于评估的贪婪选择
             k = 1
-            mask = torch.zeros(len(node_list), dtype=torch.bool)
+            mask = torch.zeros(len(node_list), dtype=torch.bool, device=DEVICE)
             selected_indices = []
             for _ in range(k):
                 probs = model(x, mask)
@@ -484,10 +524,13 @@ def train_offline(graphs_list, epochs=100, save_path='models/rl_agent.pth', mode
     print(f"Total Graphs: {len(graphs_list)}")
     print(f"Training Set: {len(train_graphs)} graphs")
     print(f"Testing Set:  {len(test_graphs)} graphs")
+    print(f"Device: {DEVICE}")
     
     # 将 hidden_dim 增加到 64
     # num_features 更新为 5
     model = MLPPolicy(num_features=5, hidden_dim=64, output_dim=1)
+    model = model.to(DEVICE)  # 移动模型到 GPU
+    
     # 降低学习率
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
     
@@ -512,11 +555,12 @@ def train_offline(graphs_list, epochs=100, save_path='models/rl_agent.pth', mode
             if G.number_of_nodes() < 2: continue
             
             x, node_list = get_node_features(G)
+            x = x.to(DEVICE)  # 移动特征到 GPU
             k = 1 
             
             log_probs = []
             selected_indices = []
-            mask = torch.zeros(len(node_list), dtype=torch.bool)
+            mask = torch.zeros(len(node_list), dtype=torch.bool, device=DEVICE)
             
             for _ in range(k):
                 probs = model(x, mask)
@@ -588,8 +632,12 @@ def train_offline(graphs_list, epochs=100, save_path='models/rl_agent.pth', mode
 
 def train_offline_single(G, k, episodes):
     x, node_list = get_node_features(G)
+    x = x.to(DEVICE)  # 移动特征到 GPU
+    
     # num_features 更新为 5
     model = MLPPolicy(num_features=5, hidden_dim=64, output_dim=1)
+    model = model.to(DEVICE)  # 移动模型到 GPU
+    
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
     best_reward = -1.0
     best_centers = []
@@ -597,7 +645,7 @@ def train_offline_single(G, k, episodes):
     for episode in range(episodes):
         selected_indices = []
         log_probs = []
-        mask = torch.zeros(len(node_list), dtype=torch.bool)
+        mask = torch.zeros(len(node_list), dtype=torch.bool, device=DEVICE)
         for _ in range(k):
             probs = model(x, mask)
             m = Categorical(probs)

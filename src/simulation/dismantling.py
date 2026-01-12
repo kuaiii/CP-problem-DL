@@ -2,10 +2,25 @@
 import networkx as nx
 import random
 import logging
+import numpy as np
 from itertools import combinations
 from tqdm import tqdm
-from src.metrics.metrics import coverage_compute2, weight_efficiency_compute, max_component_size_compute
+from src.metrics.metrics import coverage_compute2, weight_efficiency_compute, max_component_size_compute, calculate_lcc, calculate_csa, calculate_control_entropy, calculate_wcp
 from src.utils.logger import get_logger
+
+# 尝试导入 GPU 工具
+try:
+    from src.utils.gpu_utils import (
+        is_gpu_available, to_tensor, to_numpy, TORCH_AVAILABLE, CUDA_AVAILABLE, DEVICE
+    )
+    if TORCH_AVAILABLE:
+        import torch
+except ImportError:
+    TORCH_AVAILABLE = False
+    CUDA_AVAILABLE = False
+    
+    def is_gpu_available():
+        return False
 
 logger = get_logger(__name__)
 
@@ -69,14 +84,30 @@ def degree_dismantling(G):
     基于度中心性（静态）的拆解策略。
     一次性计算所有节点的度，并按降序排列。
     
+    支持 GPU 加速计算
+    
     Args:
         G (nx.Graph): 网络图。
         
     Returns:
         list: 拆解节点序列。
     """
-    sorted_nodes = sorted(G.nodes(), key=G.degree, reverse=True)
-    return list(sorted_nodes)
+    nodes = list(G.nodes())
+    
+    if is_gpu_available() and len(nodes) > 100:
+        # GPU 加速版本：使用 GPU 进行排序
+        degrees = np.array([G.degree(n) for n in nodes], dtype=np.float32)
+        degree_tensor = torch.tensor(degrees, device=DEVICE)
+        
+        # 获取排序索引（降序）
+        _, sorted_indices = torch.sort(degree_tensor, descending=True)
+        sorted_indices = sorted_indices.cpu().numpy()
+        
+        return [nodes[i] for i in sorted_indices]
+    else:
+        # CPU 版本
+        sorted_nodes = sorted(nodes, key=G.degree, reverse=True)
+        return list(sorted_nodes)
 
 def random_dismantling(G):
     """
@@ -243,14 +274,14 @@ def get_dismantling_sequence(G, method):
         logger.warning(f"Unknown method '{method}', defaulting to random.")
         return random_dismantling(G)
 
-def simulate_dismantling(G, sequence, nodes_num, centers, metric_type="gcc"):
+def simulate_dismantling(G, sequence, nodes_num, centers):
     """
     模拟网络拆解过程。
     
     过程：
     1. 按照 sequence 顺序移除节点。
     2. 检查并移除级联失效的节点（即所在的连通分量中没有控制器的节点）。
-    3. 计算当前网络的性能指标。
+    3. 计算当前网络的性能指标（LCC, CSA, CCE, WCP）。
     4. 记录指标随移除比例变化的曲线。
     
     Args:
@@ -258,24 +289,40 @@ def simulate_dismantling(G, sequence, nodes_num, centers, metric_type="gcc"):
         sequence (list): 节点移除序列。
         nodes_num (int): 初始节点总数（用于归一化）。
         centers (set): 控制器节点集合。
-        metric_type (str): 评估指标类型 ("gcc", "efficiency", "coverage")。
         
     Returns:
-        tuple: (cover_nodes, x_when_y_zero, attack_record)
-            - cover_nodes (list): [(metric_val, remove_ratio), ...]
-            - x_when_y_zero (float): 指标降为0时的移除比例。
-            - attack_record (dict): 记录被攻击节点的度。
+        tuple: (metrics_dict, x_when_lcc_20_percent)
+            - metrics_dict (dict): 包含所有指标的曲线数据
+                - 'lcc': [(lcc_value, remove_ratio), ...]
+                - 'csa': [(csa_value, remove_ratio), ...]
+                - 'cce': [(cce_value, remove_ratio), ...]
+                - 'wcp': [(wcp_value, remove_ratio), ...]
+            - x_when_lcc_20_percent (float): LCC降到20%时的移除比例。
     """
-    from src.metrics.metrics import get_metric_function
-    metric_func = get_metric_function(metric_type)
+    # 计算初始指标（在任何攻击之前）
+    centers_list = list(centers)
     
-    cover_nodes = [(1.0, 0.0)] # 初始状态：性能1.0，移除比例0.0
-    x_when_y_zero = None
-    attack_record = {}
+    # 计算初始 LCC（包含控制器的最大连通分量）
+    initial_lcc = calculate_lcc(G, centers_list)
+    initial_lcc_normalized = initial_lcc / nodes_num if nodes_num > 0 else 0
     
+    # 计算其他初始指标
+    initial_csa = calculate_csa(G, centers_list)
+    initial_cce = calculate_control_entropy(G, centers_list)
+    initial_wcp = calculate_wcp(G, centers_list)
+    
+    # 初始化指标记录（使用实际计算的初始值）
+    metrics_dict = {
+        'lcc': [(initial_lcc_normalized, 0.0)],
+        'csa': [(initial_csa, 0.0)],
+        'cce': [(initial_cce, 0.0)],
+        'wcp': [(initial_wcp, 0.0)]
+    }
+    
+    x_when_lcc_20_percent = None
     removed_count = 0
     
-    logger.debug(f"Starting simulation. Initial nodes: {G.number_of_nodes()}, Centers: {len(centers)}")
+    logger.debug(f"Starting simulation. Initial nodes: {G.number_of_nodes()}, Centers: {len(centers)}, Initial LCC: {initial_lcc_normalized:.4f}")
     
     # 遍历攻击序列
     for node in sequence:
@@ -284,104 +331,117 @@ def simulate_dismantling(G, sequence, nodes_num, centers, metric_type="gcc"):
             continue
         
         # 1. 攻击移除
-        # 记录被攻击节点的度（用于分析攻击倾向）
-        attack_record[node] = G.degree(node)
-        
-        # 显式移除边和节点
         edges = list(G.edges(node))
         G.remove_edges_from(edges)
         G.remove_node(node)
         removed_count += 1
         
         # 判断被移除的节点是否是控制器
-        is_controller_removed = False
         if node in centers:
             centers.remove(node)
-            is_controller_removed = True
             logger.debug(f"Controller {node} removed by attack.")
             
         # 2. 级联失效逻辑 (Cascade Failure)
-        # 逻辑修改：只有当控制器被移除时，才检查连通分量的控制器覆盖情况
-        if is_controller_removed:
-            # 原理：如果一个连通分量中没有任何控制器，则该分量中的所有节点失效（被移除）。
+        # 关键修复：任何节点移除后都可能导致网络分裂，
+        # 需要检查所有连通分量，移除没有控制器的分量
+        if G.number_of_nodes() > 0 and len(centers) > 0:
             components = list(nx.connected_components(G))
             nodes_to_cascade_remove = []
             
             for comp in components:
-                # isdisjoint: 如果两个集合没有共同元素，返回 True
+                # 检查该分量是否包含控制器
                 if centers.isdisjoint(comp):
-                    # 该分量中没有控制器，标记为级联移除
+                    # 该分量没有控制器，级联失效
                     nodes_to_cascade_remove.extend(list(comp))
             
             if nodes_to_cascade_remove:
-                logger.debug(f"Cascade failure triggered. Removing {len(nodes_to_cascade_remove)} nodes.")
+                logger.debug(f"Cascade failure triggered. Removing {len(nodes_to_cascade_remove)} nodes from uncontrolled components.")
                 for inode in nodes_to_cascade_remove:
                     if G.has_node(inode):
                         edges = list(G.edges(inode))
                         G.remove_edges_from(edges)
                         G.remove_node(inode)
-                        removed_count += 1 # 级联移除也算作网络损失
-                        # 理论上这些节点里不含控制器，但为了安全再次检查
-                        if inode in centers:
-                            centers.remove(inode)
-                            logger.warning(f"Unexpected: Controller {inode} found in cascade removal set!")
+                        # 注意：不增加 removed_count，因为这些是级联失效，不是直接攻击
 
         # 3. 计算指标并记录
         current_nodes = G.number_of_nodes()
-        # 计算当前的移除比例（包括攻击移除和级联移除）
         x_val = (nodes_num - current_nodes) / nodes_num
         
         if current_nodes == 0:
-            cover_nodes.append((0.0, x_val))
-            if x_when_y_zero is None:
-                x_when_y_zero = x_val
+            # 网络完全崩溃
+            metrics_dict['lcc'].append((0.0, x_val))
+            metrics_dict['csa'].append((0.0, x_val))
+            metrics_dict['cce'].append((0.0, x_val))
+            metrics_dict['wcp'].append((0.0, x_val))
+            if x_when_lcc_20_percent is None:
+                x_when_lcc_20_percent = x_val
             logger.debug("Network fully collapsed.")
             break
         else:
-            # 计算指标
-            metric_value = metric_func(G, list(centers))
+            # 预先计算共同变量以避免重复计算
+            centers_list = list(centers)
+            components = list(nx.connected_components(G))
+            centers_set = set(centers_list)
             
-            # 归一化指标
-            if metric_type == "efficiency":
-                nn = metric_value # Efficiency 通常已经在 0-1 之间，或者由函数内部处理
-            else:
-                nn = metric_value / nodes_num
+            # 计算LCC（极大连通子图占比）
+            lcc_value = calculate_lcc(G, centers_list)
+            lcc_normalized = lcc_value / nodes_num
             
-            cover_nodes.append((nn, x_val))
+            # 计算CSA（控制供给可用性）
+            csa_value = calculate_csa(G, centers_list)
             
-            # 终止条件: 指标下降到 0.2 以下（或者接近 0）
-            # 原本是 1e-6，现在改为 0.2 作为统计记录的阈值，但我们选择在这里直接结束，视为瓦解。
-            if nn <= 0.2:
-                if x_when_y_zero is None:
-                    x_when_y_zero = x_val
-                logger.debug(f"Metric dropped below 0.2 at x={x_val:.4f}")
+            # 计算CCE（控制熵）
+            cce_value = calculate_control_entropy(G, centers_list)
+            
+            # 计算WCP（加权控制势能）
+            wcp_value = calculate_wcp(G, centers_list)
+            
+            # 记录指标
+            metrics_dict['lcc'].append((lcc_normalized, x_val))
+            metrics_dict['csa'].append((csa_value, x_val))
+            metrics_dict['cce'].append((cce_value, x_val))
+            metrics_dict['wcp'].append((wcp_value, x_val))
+            
+            # 终止条件: LCC下降到20%以下
+            if lcc_normalized <= 0.2:
+                if x_when_lcc_20_percent is None:
+                    x_when_lcc_20_percent = x_val
+                logger.debug(f"LCC dropped below 20% at x={x_val:.4f}")
                 
-                # 为了 R 值计算和画图完整性，填充后续点为 0
+                # 为了画图完整性，填充后续点为0（确保x值递增，避免突然上升）
                 if x_val < 1.0:
-                    cover_nodes.append((0.0, x_val + 0.001)) # 稍微偏移一点避免重合
-                    cover_nodes.append((0.0, 1.0))
+                    # 确保填充点的x值大于当前x值
+                    next_x = min(x_val + 0.01, 1.0)  # 使用0.01而不是0.001，确保有足够间隔
+                    metrics_dict['lcc'].append((0.0, next_x))
+                    metrics_dict['lcc'].append((0.0, 1.0))
+                    metrics_dict['csa'].append((0.0, next_x))
+                    metrics_dict['csa'].append((0.0, 1.0))
+                    metrics_dict['cce'].append((0.0, next_x))
+                    metrics_dict['cce'].append((0.0, 1.0))
+                    metrics_dict['wcp'].append((0.0, next_x))
+                    metrics_dict['wcp'].append((0.0, 1.0))
                     
                 break
                 
-    return cover_nodes, x_when_y_zero, attack_record
+    return metrics_dict, x_when_lcc_20_percent
 
-def node_attack(G, nodes_num, centers, flag, metric_type="gcc"):
+def node_attack(G, nodes_num, centers, flag):
     """
     为了向后兼容的包装函数。
     1. 根据 flag 生成拆解序列。
     2. 运行仿真。
     """
-    # 1. 获取序列
+    #1. 获取序列
     # 我们传递副本给 get_sequence，因为自适应方法会修改图
     sequence = get_dismantling_sequence(G.copy(), flag)
     
-    logger.info(f"Starting node attack simulation. Mode: {flag}, Metric: {metric_type}")
+    logger.info(f"Starting node attack simulation. Mode: {flag}")
     
-    # 2. 运行仿真
+    #2. 运行仿真
     # 使用原始 G（仿真会修改它）和原始控制器集合（仿真会修改集合）
     centers_set = set(centers)
-    cover_nodes, x_when_y_zero, attack_record = simulate_dismantling(G, sequence, nodes_num, centers_set, metric_type)
+    metrics_dict, x_when_lcc_20_percent = simulate_dismantling(G, sequence, nodes_num, centers_set)
     
-    logger.info(f"Attack completed. Collapse point (x_zero): {x_when_y_zero}")
+    logger.info(f"Attack completed. Collapse point (LCC 20%): {x_when_lcc_20_percent}")
     
-    return cover_nodes, x_when_y_zero, attack_record
+    return metrics_dict, x_when_lcc_20_percent
