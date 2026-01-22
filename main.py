@@ -11,10 +11,12 @@ from src.topology.reconstruction import construct_Two, construct_Two_MaxK1, crea
 from src.topology.optimization import construct_Three, construct_onion, construct_solo, construct_romen, construct_unity
 from src.topology.bimodal_rl import construct_bimodal_rl
 from src.controller.manager import ControllerManager
-from src.visualization.result_plotter import plot_curve, plot_bar_chart, plot_box_chart
-from src.utils.io import save_x_values_to_csv, save_statistics_to_csv, save_comprehensive_metrics, save_execution_times
+from src.visualization.result_plotter import plot_curve, plot_bar_chart, plot_box_chart, plot_curves_for_batches, plot_collapse_point_charts
+from src.utils.io import save_x_values_to_csv, save_statistics_to_csv, save_comprehensive_metrics, save_execution_times, save_curve_data, save_collapse_point_data, save_area_data
 from src.utils.logger import setup_logger, get_logger
+from src.metrics.metrics import calculate_r_value_interpolated
 import time
+import numpy as np
 
 logger = get_logger(__name__)
 
@@ -160,13 +162,29 @@ def run_simulation_batch(G, args, experiment_id, dataset_name):
     if not os.path.exists(experiment_base_dir):
         os.makedirs(experiment_base_dir)
     
-    # 为每个指标类型在实验目录下创建子目录
+    # 为每个指标类型在实验目录下创建子目录，每个指标下再分为三个文件夹
     metric_dirs = {}
+    metric_subdirs = {}
     for metric_type in metric_types:
         metric_dir = os.path.join(experiment_base_dir, metric_type)
         if not os.path.exists(metric_dir):
             os.makedirs(metric_dir)
         metric_dirs[metric_type] = metric_dir
+        
+        # 为每个指标创建三个子文件夹
+        curves_dir = os.path.join(metric_dir, "curves")
+        collapse_point_dir = os.path.join(metric_dir, "collapse_point")
+        area_dir = os.path.join(metric_dir, "area")
+        
+        for subdir in [curves_dir, collapse_point_dir, area_dir]:
+            if not os.path.exists(subdir):
+                os.makedirs(subdir)
+        
+        metric_subdirs[metric_type] = {
+            'curves': curves_dir,
+            'collapse_point': collapse_point_dir,
+            'area': area_dir
+        }
     
     # 创建extradata目录（用于保存每次迭代的详细曲线）
     extra_data_dir = os.path.join(experiment_base_dir, "extradata")
@@ -184,6 +202,10 @@ def run_simulation_batch(G, args, experiment_id, dataset_name):
     # 为每个指标类型初始化 x_values 和 r_values
     x_values_by_metric = {}
     r_values_by_metric = {}
+    # 用于保存曲线数据、崩溃点数据和面积数据
+    curves_data_by_metric = {}  
+    collapse_points_by_metric = {}
+    area_values_by_metric = {}
     
     for metric_type in metric_types:
         x_values_by_metric[metric_type] = {
@@ -191,12 +213,9 @@ def run_simulation_batch(G, args, experiment_id, dataset_name):
             "RCP": [],
             "Bi-level": [],
             "GA+RL": [],
-            "Onion+Ra": [],
             "Onion+RL": [],
-            "ROMEN+Ra": [],
             "ROMEN+RL": [],
             "BimodalRL": [],
-            "UNITY+Ra": [],
             "UNITY+RL": []
         }
         
@@ -205,14 +224,16 @@ def run_simulation_batch(G, args, experiment_id, dataset_name):
             "RCP": [],
             "Bi-level": [],
             "GA+RL": [],
-            "Onion+Ra": [],
             "Onion+RL": [],
-            "ROMEN+Ra": [],
             "ROMEN+RL": [],
             "BimodalRL": [],
-            "UNITY+Ra": [],
             "UNITY+RL": []
         }
+        
+        # 初始化曲线数据、崩溃点数据和面积数据
+        curves_data_by_metric[metric_type] = {}
+        collapse_points_by_metric[metric_type] = {}
+        area_values_by_metric[metric_type] = {}
     
     plot_flag = True
     
@@ -249,12 +270,18 @@ def run_simulation_batch(G, args, experiment_id, dataset_name):
         execution_times.setdefault("Construct_Three", []).append(time.time() - start_time)
         
         start_time = time.time()
-        G5 = construct_onion(G, max_iter=2000)
+        # 根据图规模动态调整迭代次数
+        node_count = G.number_of_nodes()
+        if node_count > 200:
+            max_iter_onion = 600  # 大图使用较少的迭代次数（已有早停机制）
+        else:
+            max_iter_onion = 800
+        G5 = construct_onion(G, max_iter=max_iter_onion)
         execution_times.setdefault("Construct_Onion", []).append(time.time() - start_time)
         
-        start_time = time.time()
-        G6 = construct_solo(G)
-        execution_times.setdefault("Construct_SOLO", []).append(time.time() - start_time)
+        # start_time = time.time()
+        # G6 = construct_solo(G)
+        # execution_times.setdefault("Construct_SOLO", []).append(time.time() - start_time)
         
         start_time = time.time()
         G7 = construct_romen(G)
@@ -263,6 +290,22 @@ def run_simulation_batch(G, args, experiment_id, dataset_name):
         start_time = time.time()
         G8 = construct_bimodal_rl(G)
         execution_times.setdefault("Construct_BimodalRL", []).append(time.time() - start_time)
+        
+        # 检查G8是否等于G（如果相同，BimodalRL和Baseline会使用相同的图）
+        if ijk == 0:
+            if G8.number_of_nodes() == G.number_of_nodes() and G8.number_of_edges() == G.number_of_edges():
+                edges_G = set(G.edges())
+                edges_G8 = set(G8.edges())
+                if edges_G == edges_G8:
+                    logger.warning("=" * 60)
+                    logger.warning("CRITICAL WARNING: G8 (BimodalRL) is IDENTICAL to G (Baseline)!")
+                    logger.warning("This means BimodalRL optimization failed or returned the original graph.")
+                    logger.warning("Baseline and BimodalRL will use the SAME graph structure.")
+                    logger.warning("=" * 60)
+                else:
+                    logger.info(f"G8 has same size as G but different edges. Common edges: {len(edges_G & edges_G8)}/{len(edges_G)}")
+            else:
+                logger.info(f"G8 differs from G: G({G.number_of_nodes()}, {G.number_of_edges()}) vs G8({G8.number_of_nodes()}, {G8.number_of_edges()})")
 
         start_time = time.time()
         G9 = construct_unity(G)
@@ -276,7 +319,7 @@ def run_simulation_batch(G, args, experiment_id, dataset_name):
             "G3": G3, # 双模态
             "G4": G4, # GA 优化
             "G5": G5, # ONION 优化
-            "G6": G6, # SOLO 优化
+            # "G6": G6, # SOLO 优化
             "G7": G7, # ROMEN 优化
             "G8": G8, # BimodalRL 优化
             "G9": G9  # UNITY 优化
@@ -303,6 +346,55 @@ def run_simulation_batch(G, args, experiment_id, dataset_name):
             metric_types,
             metric_dirs
         )
+        
+        # 收集当前迭代的曲线数据、崩溃点数据和面积数据
+        if hasattr(manager, 'metrics_summary'):
+            for name, metrics_list in manager.metrics_summary.items():
+                if not metrics_list:
+                    continue
+                
+                current_metric = metrics_list[-1]  # 当前迭代的数据
+                
+                for metric_type in metric_types:
+                    curve_key = f'{metric_type.upper()}_Curve'
+                    curve_data = current_metric.get(curve_key, [])
+                    
+                    if curve_data:
+                        x_curve = [point[1] for point in curve_data]
+                        y_curve = [point[0] for point in curve_data]
+                        
+                        # 计算面积（R值）- 使用统一x网格插值方法
+                        # 解决多层网络拆解中不同方法x采样点不同的问题
+                        r_val = calculate_r_value_interpolated(x_curve, y_curve, num_points=101)
+                        
+                        # 保存曲线数据
+                        if name not in curves_data_by_metric[metric_type]:
+                            curves_data_by_metric[metric_type][name] = []
+                        curves_data_by_metric[metric_type][name].append((x_curve, y_curve, r_val))
+                        
+                        # 保存面积数据
+                        if name not in area_values_by_metric[metric_type]:
+                            area_values_by_metric[metric_type][name] = []
+                        area_values_by_metric[metric_type][name].append(r_val)
+                        
+                        # 计算崩溃点（下降到20%时的移除节点比例）
+                        if len(y_curve) > 0:
+                            initial_value = y_curve[0] if y_curve[0] > 0 else 1.0
+                            threshold = initial_value * 0.2
+                            
+                            collapse_point = None
+                            for i, y_val in enumerate(y_curve):
+                                if y_val <= threshold:
+                                    collapse_point = x_curve[i]
+                                    break
+                            
+                            if collapse_point is None and len(x_curve) > 0:
+                                collapse_point = x_curve[-1]
+                            
+                            # 保存崩溃点数据
+                            if name not in collapse_points_by_metric[metric_type]:
+                                collapse_points_by_metric[metric_type][name] = []
+                            collapse_points_by_metric[metric_type][name].append(collapse_point if collapse_point is not None else 1.0)
         
         execution_times.setdefault("Simulation_Run", []).append(time.time() - sim_start_time)
         execution_times.setdefault("Total_Iteration", []).append(time.time() - iter_start_time)
@@ -344,16 +436,54 @@ def run_simulation_batch(G, args, experiment_id, dataset_name):
     if execution_times:
         save_execution_times(execution_times, common_dir)
     
-    # 为每个指标类型保存结果
+    # 为每个指标类型保存结果到新的目录结构
     for metric_type in metric_types:
-        save_and_plot_results(
-            x_values_by_metric[metric_type], 
-            r_values_by_metric[metric_type], 
-            dataset_name, 
-            current_attack_mode, 
-            experiment_id, 
-            metric_dirs[metric_type]
-        )
+        subdirs = metric_subdirs[metric_type]
+        
+        # 1. 保存曲线数据到curves文件夹
+        if curves_data_by_metric[metric_type]:
+            save_curve_data(
+                curves_data_by_metric[metric_type],
+                subdirs['curves'],
+                metric_type,
+                current_attack_mode
+            )
+            
+            # 绘制前5个batch的折线图（如果batch_size<5就全画）
+            plot_curves_for_batches(
+                curves_data_by_metric[metric_type],
+                subdirs['curves'],
+                metric_type,
+                current_attack_mode,
+                batch_size,
+                dataset_name
+            )
+        
+        # 2. 保存崩溃点数据到collapse_point文件夹
+        if collapse_points_by_metric[metric_type]:
+            save_collapse_point_data(
+                collapse_points_by_metric[metric_type],
+                subdirs['collapse_point'],
+                metric_type,
+                current_attack_mode
+            )
+            
+            # 绘制崩溃点的bar图和箱线图
+            plot_collapse_point_charts(
+                collapse_points_by_metric[metric_type],
+                subdirs['collapse_point'],
+                metric_type,
+                current_attack_mode
+            )
+        
+        # 3. 保存面积数据到area文件夹
+        if area_values_by_metric[metric_type]:
+            save_area_data(
+                area_values_by_metric[metric_type],
+                subdirs['area'],
+                metric_type,
+                current_attack_mode
+            )
         
     return x_values_by_metric['lcc'], r_values_by_metric['lcc']
 

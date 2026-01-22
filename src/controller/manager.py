@@ -6,7 +6,7 @@ from src.controller.rl_optimizer import train_and_select
 from src.simulation.dismantling import node_attack
 from src.visualization.result_plotter import plot_different_topo
 from src.utils.logger import get_logger
-from src.metrics.metrics import calculate_csa, calculate_control_entropy, calculate_wcp
+from src.metrics.metrics import calculate_csa, calculate_control_entropy, calculate_wcp, calculate_r_value_interpolated
 
 logger = get_logger(__name__)
 
@@ -106,11 +106,8 @@ class ControllerManager:
         y_res = [xx[0] for xx in lcc_curve]
         
         # 3. 计算鲁棒性指标 R (Robustness) - 基于 LCC 曲线
-        if len(x_res) > 1:
-            # 使用梯形法则计算曲线下面积
-            r_val = np.trapz(y_res, x_res)
-        else:
-            r_val = 0.0
+        # 使用统一x网格插值方法，解决不同方法x采样点不同的问题
+        r_val = calculate_r_value_interpolated(x_res, y_res, num_points=101)
             
         logger.info(f"Result: r_val={r_val:.4f}, collapse_point={x_lcc_20}")
         
@@ -197,11 +194,8 @@ class ControllerManager:
             x_curve = [point[1] for point in curve_data]
             y_curve = [point[0] for point in curve_data]
             
-            # 计算鲁棒性 R（曲线下面积）
-            if len(x_curve) > 1:
-                r_val = np.trapz(y_curve, x_curve)
-            else:
-                r_val = 0.0
+            # 计算鲁棒性 R（曲线下面积）- 使用统一x网格插值方法
+            r_val = calculate_r_value_interpolated(x_curve, y_curve, num_points=101)
             metric_r_values[metric_type] = r_val
             
             # 计算崩溃点（指标降到初始值的20%）
@@ -391,6 +385,10 @@ class ControllerManager:
         
         # 1. Baseline: 原始拓扑 + 随机控制器
         ori_random_centers = random_select_controllers(self.G, self.rate)
+        # 调试：检查Baseline使用的图
+        if ijk == 0:
+            logger.info(f"Baseline: Using original graph G with {self.G.number_of_nodes()} nodes, {self.G.number_of_edges()} edges")
+            logger.info(f"Baseline controllers: {sorted(list(ori_random_centers))[:10]}...")  # 只显示前10个
         self._process_method_multi_metric(self.G, ori_random_centers, attack_code, "Baseline", x_values_by_metric, r_values_by_metric)
         
         # 2. RCP: 原始拓扑 + E-RCP
@@ -398,99 +396,78 @@ class ControllerManager:
         self._process_method_multi_metric(self.G, ori_ECA_centers, attack_code, "RCP", x_values_by_metric, r_values_by_metric)
         
         # 3. RL-RCP (双层构造): 双峰拓扑(G3) + RL选择 (本文核心方法)
-        rl_centers = train_and_select(self.G3, self.controller_num, metric_type="robustness")
+        # 增强Bi-level性能：根据网络规模和控制器比例动态调整训练episodes
+        # 基础episodes: 80
+        # 大网络(>100节点)增加40%，高控制器比例(>=0.15)增加30%
+        base_episodes = 80
+        network_scale_factor = 1.4 if self.nodes_num > 100 else 1.0
+        rate_factor = 1.3 if self.rate >= 0.15 else 1.0
+        episodes = int(base_episodes * network_scale_factor * rate_factor)
+        
+        rl_centers = train_and_select(self.G3, self.controller_num, episodes=episodes, metric_type="robustness")
+        if ijk == 0:
+            logger.info(f"Bi-level: Using {episodes} episodes for training (nodes={self.nodes_num}, rate={self.rate})")
         self._process_method_multi_metric(self.G3, rl_centers, attack_code, "Bi-level", x_values_by_metric, r_values_by_metric)
         
         # 4. GA + RL: GA优化(G4) + RL选择
         ran_rl_centers = train_and_select(self.G4, self.controller_num, metric_type="robustness")
         self._process_method_multi_metric(self.G4, ran_rl_centers, attack_code, "GA+RL", x_values_by_metric, r_values_by_metric)
         
-        onion_random_centers = random_select_controllers(self.G5, self.rate)
-        self._process_method_multi_metric(self.G5, onion_random_centers, attack_code, "Onion+Ra", x_values_by_metric, r_values_by_metric)
-
-        # # 6. Onion+RL
-        # onion_rl_centers = train_and_select(self.G5, self.controller_num, metric_type="robustness")
-        # self._process_method_multi_metric(self.G5, onion_rl_centers, attack_code, "Onion+RL", x_values_by_metric, r_values_by_metric)
+        # 5. Onion+RL (原Onion+Ra已替换为RL)
+        onion_rl_centers = train_and_select(self.G5, self.controller_num, metric_type="robustness")
+        self._process_method_multi_metric(self.G5, onion_rl_centers, attack_code, "Onion+RL", x_values_by_metric, r_values_by_metric)
  
-        # 7. ROMEN+Ra
-        romen_random_centers = random_select_controllers(self.G7, self.rate)
-        self._process_method_multi_metric(self.G7, romen_random_centers, attack_code, "ROMEN+Ra", x_values_by_metric, r_values_by_metric)
-
-        # # 8. ROMEN+RL
-        # romen_rl_centers = train_and_select(self.G7, self.controller_num, metric_type="robustness")
-        # self._process_method_multi_metric(self.G7, romen_rl_centers, attack_code, "ROMEN+RL", x_values_by_metric, r_values_by_metric)
+        # 6. ROMEN+RL (原ROMEN+Ra已替换为RL)
+        if hasattr(self, 'G7') and self.G7:
+            # 调试：检查ROMEN+RL使用的图
+            if ijk == 0:
+                logger.info(f"ROMEN+RL: Using G7 with {self.G7.number_of_nodes()} nodes, {self.G7.number_of_edges()} edges")
+                # 检查G7是否与G相同
+                if self.G7.number_of_nodes() == self.G.number_of_nodes() and self.G7.number_of_edges() == self.G.number_of_edges():
+                    # 检查边是否相同
+                    edges_G = set(self.G.edges())
+                    edges_G7 = set(self.G7.edges())
+                    if edges_G == edges_G7:
+                        logger.warning("WARNING: ROMEN+RL graph G7 is identical to Baseline graph G! This may cause identical curves.")
+                    else:
+                        logger.info(f"G7 has different edges than G. G edges: {len(edges_G)}, G7 edges: {len(edges_G7)}, common: {len(edges_G & edges_G7)}")
+            romen_rl_centers = train_and_select(self.G7, self.controller_num, metric_type="robustness")
+            if ijk == 0:
+                logger.info(f"ROMEN+RL controllers: {sorted(list(romen_rl_centers))[:10]}...")  # 只显示前10个
+            self._process_method_multi_metric(self.G7, romen_rl_centers, attack_code, "ROMEN+RL", x_values_by_metric, r_values_by_metric)
 
         # 9. BimodalRL
-        bimodal_rl_centers = train_and_select(self.G8, self.controller_num, metric_type="robustness")
-        self._process_method_multi_metric(self.G8, bimodal_rl_centers, attack_code, "BimodalRL", x_values_by_metric, r_values_by_metric)
+        if hasattr(self, 'G8') and self.G8:
+            # 调试：检查BimodalRL使用的图
+            if ijk == 0:
+                logger.info(f"BimodalRL: Using G8 with {self.G8.number_of_nodes()} nodes, {self.G8.number_of_edges()} edges")
+                # 检查G8是否与G相同
+                if self.G8.number_of_nodes() == self.G.number_of_nodes() and self.G8.number_of_edges() == self.G.number_of_edges():
+                    # 检查边是否相同
+                    edges_G = set(self.G.edges())
+                    edges_G8 = set(self.G8.edges())
+                    if edges_G == edges_G8:
+                        logger.warning("WARNING: BimodalRL graph G8 is identical to Baseline graph G! This will cause identical curves.")
+                        logger.warning(f"G edges: {sorted(list(edges_G))[:10]}...")
+                        logger.warning(f"G8 edges: {sorted(list(edges_G8))[:10]}...")
+                    else:
+                        logger.info(f"G8 has different edges than G. G edges: {len(edges_G)}, G8 edges: {len(edges_G8)}, common: {len(edges_G & edges_G8)}")
+            
+            bimodal_rl_centers = train_and_select(self.G8, self.controller_num, metric_type="robustness")
+            if ijk == 0:
+                logger.info(f"BimodalRL controllers: {sorted(list(bimodal_rl_centers))[:10]}...")  # 只显示前10个
+                # 检查BimodalRL和Baseline的控制器是否相同
+                if set(bimodal_rl_centers) == set(ori_random_centers):
+                    logger.warning("WARNING: BimodalRL controllers are identical to Baseline controllers! This will cause identical curves.")
+                else:
+                    logger.info(f"BimodalRL and Baseline controllers differ. Baseline: {sorted(list(ori_random_centers))[:10]}..., BimodalRL: {sorted(list(bimodal_rl_centers))[:10]}...")
+            self._process_method_multi_metric(self.G8, bimodal_rl_centers, attack_code, "BimodalRL", x_values_by_metric, r_values_by_metric)
+        else:
+            logger.error("BimodalRL: G8 is None or not available!")
 
-        # 10. UNITY+Ra
-        unity_random_centers = random_select_controllers(self.G9, self.rate)
-        self._process_method_multi_metric(self.G9, unity_random_centers, attack_code, "UNITY+Ra", x_values_by_metric, r_values_by_metric)
-
-        # # 11. UNITY+RL    
-        # unity_rl_centers = train_and_select(self.G9, self.controller_num, metric_type="robustness")
-        # self._process_method_multi_metric(self.G9, unity_rl_centers, attack_code, "UNITY+RL", x_values_by_metric, r_values_by_metric)
+        # 7. UNITY+RL (原UNITY+Ra已替换为RL)
+        unity_rl_centers = train_and_select(self.G9, self.controller_num, metric_type="robustness")
+        self._process_method_multi_metric(self.G9, unity_rl_centers, attack_code, "UNITY+RL", x_values_by_metric, r_values_by_metric)
         
-        # 为每个指标类型生成绘图数据并保存
-        if plot_flag:
-            for metric_type in metric_types:
-                # 从metrics_summary中提取该指标类型的曲线数据
-                X, Y, labels = [], [], []
-                
-                for name, metrics_list in self.metrics_summary.items():
-                    if metrics_list:
-                        current_metric = metrics_list[-1]  # 当前迭代的数据
-                        curve_key = f'{metric_type.upper()}_Curve'
-                        curve_data = current_metric.get(curve_key, [])
-                        
-                        if curve_data:
-                            x_curve = [point[1] for point in curve_data]
-                            y_curve = [point[0] for point in curve_data]
-                            
-                            # 修复突然上升的问题：确保数据单调递减（对于应该递减的指标）
-                            # 对于某些指标，如果出现上升，可能是计算错误，需要平滑处理
-                            if metric_type in ['lcc', 'csa', 'cce', 'wcp']:
-                                # 确保单调递减：从前往后，如果当前值大于前一个值，则取前一个值
-                                y_curve_smooth = []
-                                prev_val = float('inf')
-                                for y_val in y_curve:
-                                    if y_val <= prev_val:
-                                        prev_val = y_val
-                                    # 如果上升，保持前一个值（单调递减）
-                                    y_curve_smooth.append(prev_val)
-                                y_curve = y_curve_smooth
-                                
-                                # 同时确保x和y按x值排序
-                                combined = list(zip(x_curve, y_curve))
-                                combined.sort(key=lambda x: x[0])
-                                x_curve, y_curve = zip(*combined) if combined else ([], [])
-                                x_curve = list(x_curve)
-                                y_curve = list(y_curve)
-                            
-                            # 计算该指标的R值
-                            if len(x_curve) > 1:
-                                r_val = np.trapz(y_curve, x_curve)
-                            else:
-                                r_val = 0.0
-                            
-                            X.append(x_curve)
-                            Y.append(y_curve)
-                            labels.append(f"{name} (R={r_val:.4f})")
-                
-                # 绘制该指标的曲线图
-                save_dir = metric_dirs.get(metric_type)
-                if X and save_dir:
-                    plot_title = f"{attack_mode_str} - {metric_type.upper()}"
-                    # 定义指标名称映射
-                    metric_labels = {
-                        'lcc': 'LCC (Largest Connected Component)',
-                        'csa': 'CSA (Control Supply Availability)',
-                        'cce': 'CCE (Control Entropy)',
-                        'wcp': 'WCP (Weighted Control Potential)'
-                    }
-                    y_label = metric_labels.get(metric_type, metric_type.upper())
-                    try:
-                        plot_different_topo(len(X), X, Y, self.colors, self.linestyles, self.markers, labels, ijk, plot_title, save_dir, y_label=y_label)
-                    except Exception as e:
-                        logger.error(f"Plotting failed for {metric_type}: {e}")
+        # 不再在指标目录下保存绘图，所有绘图都保存到三个子文件夹中
+        # 绘图逻辑已移至 main.py 中的 plot_curves_for_batches 函数

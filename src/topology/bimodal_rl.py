@@ -269,10 +269,21 @@ class BimodalRLOptimizer(ROHEMOptimizer):
                     logger.error(f"Generation {generation} error: {e}")
                     continue
             
+            # 检查优化后的图是否与原始图相同
+            if best_topology.graph.number_of_nodes() == initial_graph.number_of_nodes() and \
+               best_topology.graph.number_of_edges() == initial_graph.number_of_edges():
+                edges_initial = set(initial_graph.edges())
+                edges_best = set(best_topology.graph.edges())
+                if edges_initial == edges_best:
+                    logger.warning("WARNING: BimodalRL optimization returned the same graph as input! No optimization occurred.")
+                else:
+                    logger.info(f"BimodalRL: Graph structure changed. Initial edges: {len(edges_initial)}, Optimized edges: {len(edges_best)}, Common: {len(edges_initial & edges_best)}")
+            
             return best_topology.graph
             
         except Exception as e:
             logger.error(f"Optimization error: {e}")
+            logger.warning("WARNING: BimodalRL optimization failed, returning original graph!")
             return initial_graph
 
     def _topology_interaction(self, agent, topology, steps=15):
@@ -346,20 +357,20 @@ class BimodalRLOptimizer(ROHEMOptimizer):
         
         return experiences, fitness, current_topology, successful_swaps
 
-def construct_bimodal_rl(G, generations=50):
+def construct_bimodal_rl(G, generations=35):
     """
     Construct a network using Bimodal RL Optimization.
     GPU 加速优化版本。
     
     Args:
         G: 输入图
-        generations: 优化代数 (默认50，配合早停)
+        generations: 优化代数 (默认35，配合早停)
     """
     start_time = time.time()
     logger.info("  Starting Bimodal RL Structure Optimization (GPU Accelerated)...")
     
     optimizer = BimodalRLOptimizer(
-        population_size=3,  # 减少种群大小以加速
+        population_size=2,  # 进一步减少种群大小
         generations=generations,
         verbose=True,
         bimodal_weight=1.0,

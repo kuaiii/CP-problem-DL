@@ -396,32 +396,46 @@ def simulate_dismantling(G, sequence, nodes_num, centers):
             # 计算WCP（加权控制势能）
             wcp_value = calculate_wcp(G, centers_list)
             
+            # 异常值检测：对于应该递减的指标，如果当前值大于上一个值，使用上一个值
+            # 获取上一个值
+            if len(metrics_dict['csa']) > 0:
+                prev_csa = metrics_dict['csa'][-1][0]
+                if csa_value > prev_csa:
+                    logger.warning(f"CSA异常值检测: {prev_csa:.4f} -> {csa_value:.4f}, 使用上一个值")
+                    csa_value = prev_csa
+            
+            if len(metrics_dict['cce']) > 0:
+                prev_cce = metrics_dict['cce'][-1][0]
+                if cce_value > prev_cce:
+                    logger.warning(f"CCE异常值检测: {prev_cce:.4f} -> {cce_value:.4f}, 使用上一个值")
+                    cce_value = prev_cce
+            
+            if len(metrics_dict['wcp']) > 0:
+                prev_wcp = metrics_dict['wcp'][-1][0]
+                if wcp_value > prev_wcp:
+                    logger.warning(f"WCP异常值检测: {prev_wcp:.4f} -> {wcp_value:.4f}, 使用上一个值")
+                    wcp_value = prev_wcp
+            
+            # LCC 也应该递减，但通常不会出现异常值，因为它是基于连通分量的
+            if len(metrics_dict['lcc']) > 0:
+                prev_lcc = metrics_dict['lcc'][-1][0]
+                if lcc_normalized > prev_lcc:
+                    logger.warning(f"LCC异常值检测: {prev_lcc:.4f} -> {lcc_normalized:.4f}, 使用上一个值")
+                    lcc_normalized = prev_lcc
+            
             # 记录指标
             metrics_dict['lcc'].append((lcc_normalized, x_val))
             metrics_dict['csa'].append((csa_value, x_val))
             metrics_dict['cce'].append((cce_value, x_val))
             metrics_dict['wcp'].append((wcp_value, x_val))
             
-            # 终止条件: LCC下降到20%以下
-            if lcc_normalized <= 0.2:
-                if x_when_lcc_20_percent is None:
-                    x_when_lcc_20_percent = x_val
-                logger.debug(f"LCC dropped below 20% at x={x_val:.4f}")
-                
-                # 为了画图完整性，填充后续点为0（确保x值递增，避免突然上升）
-                if x_val < 1.0:
-                    # 确保填充点的x值大于当前x值
-                    next_x = min(x_val + 0.01, 1.0)  # 使用0.01而不是0.001，确保有足够间隔
-                    metrics_dict['lcc'].append((0.0, next_x))
-                    metrics_dict['lcc'].append((0.0, 1.0))
-                    metrics_dict['csa'].append((0.0, next_x))
-                    metrics_dict['csa'].append((0.0, 1.0))
-                    metrics_dict['cce'].append((0.0, next_x))
-                    metrics_dict['cce'].append((0.0, 1.0))
-                    metrics_dict['wcp'].append((0.0, next_x))
-                    metrics_dict['wcp'].append((0.0, 1.0))
-                    
-                break
+            # 记录LCC降到20%时的移除比例（但不停止攻击）
+            if lcc_normalized <= 0.2 and x_when_lcc_20_percent is None:
+                x_when_lcc_20_percent = x_val
+                logger.debug(f"LCC dropped below 20% at x={x_val:.4f} (continuing attack)")
+            
+            # 继续攻击直到网络完全崩溃或序列结束
+            # 不再提前break，让攻击继续进行
                 
     return metrics_dict, x_when_lcc_20_percent
 

@@ -518,9 +518,9 @@ class SACAgent:
             return {"actor_loss": 0, "critic_loss": 0, "value_loss": 0}
 
 class ROHEMOptimizer:
-    """ROMEM优化器"""
+    """ROMEM优化器 - 高性能版本"""
     
-    def __init__(self, population_size=3, generations=50, verbose=True):
+    def __init__(self, population_size=2, generations=15, verbose=True):
         self.population_size = population_size
         self.generations = generations
         self.verbose = verbose
@@ -534,10 +534,11 @@ class ROHEMOptimizer:
         
     def optimize_topology(self, initial_graph, positions=None, area_size=1000, 
                          comm_distance=None, max_time=None):
+        """优化拓扑 - 带早停机制的高性能版本"""
         start_time = time.time()
         
         if self.verbose:
-            logger.info("=== Starting ROMEM Topology Optimization ===")
+            logger.info("=== Starting ROMEM Topology Optimization (Fast) ===")
         
         try:
             topology = NetworkTopology(
@@ -555,15 +556,16 @@ class ROHEMOptimizer:
             action_dim = 2
             
             master_agent = SACAgent(state_dim, action_dim)
-            population = []
-            for i in range(self.population_size):
-                agent = SACAgent(state_dim, action_dim)
-                population.append(agent)
+            population = [SACAgent(state_dim, action_dim) for _ in range(self.population_size)]
             
             best_robustness = initial_robustness
             best_topology = copy.deepcopy(topology)
             
-            pbar = tqdm(range(self.generations), desc="Optimizing") if self.verbose else range(self.generations)
+            # 早停参数
+            no_improvement_count = 0
+            early_stop_patience = 5  # 连续5代无改进则停止
+            
+            pbar = tqdm(range(self.generations), desc="ROMEN Opt") if self.verbose else range(self.generations)
             
             for generation in pbar:
                 if max_time and (time.time() - start_time) > max_time:
@@ -573,46 +575,45 @@ class ROHEMOptimizer:
                     all_experiences = []
                     fitness_scores = []
                     
+                    # Master agent interaction (减少步数)
                     master_experiences, master_fitness, master_topology, master_swaps = \
-                        self._topology_interaction(master_agent, topology, steps=15)
+                        self._topology_interaction(master_agent, topology, steps=10)
                     all_experiences.extend(master_experiences)
                     
+                    # Population interaction (减少步数)
                     for i, agent in enumerate(population):
                         experiences, fitness, agent_topology, swaps = \
-                            self._topology_interaction(agent, topology, steps=10)
+                            self._topology_interaction(agent, topology, steps=6)
                         all_experiences.extend(experiences)
                         fitness_scores.append((i, fitness, agent_topology))
                         
-                        for exp in experiences[-5:]:
+                        # 只保留最好的经验
+                        for exp in experiences[-3:]:
                             agent.replay_buffer.push(*exp)
                     
-                    for exp in all_experiences[-20:]:
+                    for exp in all_experiences[-10:]:
                         master_agent.replay_buffer.push(*exp)
                     
-                    if generation % 30 == 0 and len(fitness_scores) >= 2:
+                    # Evolution (减少频率)
+                    if generation % 5 == 0 and len(fitness_scores) >= 2:
                         fitness_scores.sort(key=lambda x: x[1], reverse=True)
                         
                         if random.random() < self.crossover_prob:
                             parent1_idx, parent2_idx = fitness_scores[0][0], fitness_scores[1][0]
-                            parent1 = population[parent1_idx]
-                            parent2 = population[parent2_idx]
-                            
-                            offspring = self._distillation_crossover(parent1, parent2)
+                            offspring = self._distillation_crossover(population[parent1_idx], population[parent2_idx])
                             worst_idx = fitness_scores[-1][0]
                             population[worst_idx] = offspring
-                        
-                        if random.random() < 0.2:
-                            mutation_idx = random.randint(0, len(population) - 1)
-                            population[mutation_idx] = self._gaussian_mutation(population[mutation_idx])
                     
-                    if generation % 3 == 0 and master_agent.replay_buffer.size() > 16:
+                    # RL Update (减少频率)
+                    if generation % 2 == 0 and master_agent.replay_buffer.size() > 16:
                         master_agent.update(batch_size=16)
                     
-                    if generation % 10 == 0:
+                    if generation % 5 == 0:
                         for agent in population:
                             if agent.replay_buffer.size() > 8:
                                 agent.update(batch_size=8)
                     
+                    # Track Best Solution
                     current_best_fitness = -float('inf')
                     current_best_topology = None
                     
@@ -621,22 +622,36 @@ class ROHEMOptimizer:
                             current_best_fitness = fitness
                             current_best_topology = topology_candidate
                     
+                    improved = False
                     if current_best_topology:
                         try:
                             current_robustness = current_best_topology.calculate_robustness_RG()
                             if current_robustness > best_robustness:
                                 best_robustness = current_robustness
                                 best_topology = copy.deepcopy(current_best_topology)
-                                topology = copy.deepcopy(current_best_topology)
+                                topology = current_best_topology  # 不用 deepcopy
+                                improved = True
                         except Exception as e:
-                            logger.warning(f"Robustness evaluation error: {e}")
+                            pass
+                    
+                    if improved:
+                        no_improvement_count = 0
+                    else:
+                        no_improvement_count += 1
                     
                     self.robustness_history.append(best_robustness)
                     
                     if self.verbose and hasattr(pbar, 'set_postfix'):
                         pbar.set_postfix({
-                            'Robustness': f'{best_robustness:.4f}'
+                            'R': f'{best_robustness:.4f}',
+                            'no_imp': no_improvement_count
                         })
+                    
+                    # 早停检查
+                    if no_improvement_count >= early_stop_patience:
+                        if self.verbose:
+                            logger.info(f"  Early stopping at generation {generation}")
+                        break
                 
                 except Exception as e:
                     logger.error(f"Generation {generation} error: {e}")

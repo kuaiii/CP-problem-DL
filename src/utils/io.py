@@ -209,3 +209,117 @@ def save_execution_times(execution_times, save_dir):
         writer.writerows(rows)
         
     logger.info(f"Execution times saved to: {path}")
+
+def save_curve_data(curves_data, save_dir, metric_type, attack_mode):
+    """
+    保存曲线数据（不同batch_size的x, y值）到CSV文件。
+    
+    参数:
+        curves_data (dict): {method: [(x_list, y_list, r_value), ...]} 每个方法对应多个batch的曲线数据
+        save_dir (str): 保存目录
+        metric_type (str): 指标类型
+        attack_mode (str): 攻击模式
+    """
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    
+    # 固定顺序，只保存有数据的方法
+    fixed_order = ["Baseline", "RCP", "Bi-level", "GA+RL", "Onion+Ra", "Onion+RL", "ROMEN+Ra", "ROMEN+RL", "BimodalRL", "UNITY+Ra", "UNITY+RL"]
+    
+    # 为每个方法保存曲线数据
+    for method in fixed_order:
+        if method not in curves_data or not curves_data[method]:
+            continue
+        
+        # 保存每个batch的曲线数据
+        for batch_idx, (x_list, y_list, r_value) in enumerate(curves_data[method]):
+            filename = f"{method}_batch{batch_idx}_{attack_mode}_{metric_type}.csv"
+            path = os.path.join(save_dir, filename)
+            
+            with open(path, mode="w", newline="", encoding="utf-8") as file:
+                writer = csv.writer(file)
+                writer.writerow(["x_val", "y_val", "r_value"])
+                for x, y in zip(x_list, y_list):
+                    writer.writerow([f"{x:.6f}", f"{y:.6f}", f"{r_value:.6f}"])
+    
+    logger.info(f"Curve data saved to: {save_dir}")
+
+def save_collapse_point_data(collapse_points, save_dir, metric_type, attack_mode):
+    """
+    保存崩溃点数据（每个batch_size下下降到20%时的移除节点比例）到CSV文件。
+    
+    参数:
+        collapse_points (dict): {method: [collapse_point_values]} 每个方法对应多个batch的崩溃点
+        save_dir (str): 保存目录
+        metric_type (str): 指标类型
+        attack_mode (str): 攻击模式
+    """
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    
+    path = os.path.join(save_dir, f"collapse_points_{attack_mode}_{metric_type}.csv")
+    
+    # 固定顺序，只保存有数据的方法
+    fixed_order = ["Baseline", "RCP", "Bi-level", "GA+RL", "Onion+Ra", "Onion+RL", "ROMEN+Ra", "ROMEN+RL", "BimodalRL", "UNITY+Ra", "UNITY+RL"]
+    
+    # 计算最大batch数量
+    max_batches = max(len(v) for v in collapse_points.values()) if collapse_points else 0
+    headers = ["Method"] + [f"Batch_{i}" for i in range(max_batches)]
+    rows = []
+    
+    for method in fixed_order:
+        if method not in collapse_points or not collapse_points[method]:
+            continue
+        
+        row = [method] + [f"{val:.6f}" for val in collapse_points[method]]
+        rows.append(row)
+    
+    if rows:
+        with open(path, mode="w", newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            writer.writerow(headers)
+            writer.writerows(rows)
+        
+        logger.info(f"Collapse point data saved to: {path}")
+
+def save_area_data(area_values, save_dir, metric_type, attack_mode):
+    """
+    保存面积数据（曲线下面积值）到CSV文件，用于比较不同算法的平均性能。
+    
+    参数:
+        area_values (dict): {method: [area_values]} 每个方法对应多个batch的面积值
+        save_dir (str): 保存目录
+        metric_type (str): 指标类型
+        attack_mode (str): 攻击模式
+    """
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    
+    path = os.path.join(save_dir, f"area_values_{attack_mode}_{metric_type}.csv")
+    
+    # 固定顺序，只保存有数据的方法
+    fixed_order = ["Baseline", "RCP", "Bi-level", "GA+RL", "Onion+Ra", "Onion+RL", "ROMEN+Ra", "ROMEN+RL", "BimodalRL", "UNITY+Ra", "UNITY+RL"]
+    
+    # 计算最大batch数量
+    max_batches = max(len(v) for v in area_values.values()) if area_values else 0
+    headers = ["Method", "Mean_Area", "Std_Area"] + [f"Batch_{i}" for i in range(max_batches)]
+    rows = []
+    
+    for method in fixed_order:
+        if method not in area_values or not area_values[method]:
+            continue
+        
+        values = area_values[method]
+        mean_area = np.mean(values)
+        std_area = np.std(values)
+        
+        row = [method, f"{mean_area:.6f}", f"{std_area:.6f}"] + [f"{val:.6f}" for val in values]
+        rows.append(row)
+    
+    if rows:
+        with open(path, mode="w", newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            writer.writerow(headers)
+            writer.writerows(rows)
+        
+        logger.info(f"Area data saved to: {path}")

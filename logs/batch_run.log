@@ -163,3 +163,61 @@ Interrupted by user.
 2026-01-06 15:44:14 - __main__ - INFO - Finished: UsCarrier (degree)
 2026-01-06 15:44:14 - __main__ - INFO - Progress: 10/10 tasks completed.
 2026-01-06 15:44:14 - __main__ - INFO - All simulations completed in 23.84 minutes.
+2026-01-13 02:35:30 - root - INFO - Logger initialized. Log file: logs\batch_run.log
+2026-01-13 02:35:30 - __main__ - INFO - Found 5 datasets: Chinanet, Cogentco, Colt, GtsCe, UsCarrier
+2026-01-13 02:35:30 - __main__ - INFO - Starting batch run: 10 tasks
+2026-01-13 02:35:30 - __main__ - INFO -   Datasets: 5
+2026-01-13 02:35:30 - __main__ - INFO -   Attack modes: random, degree
+2026-01-13 02:35:30 - __main__ - INFO -   Batch size: 20
+2026-01-13 02:35:30 - __main__ - INFO -   Controller rate: 0.1
+2026-01-13 02:35:30 - __main__ - INFO - Starting simulation: Dataset=Chinanet, Attack=random, Batch=20
+2026-01-13 02:37:04 - __main__ - INFO - Finished: Chinanet (random)
+2026-01-13 02:37:04 - __main__ - INFO - Progress: 1/10 completed, 0 skipped, 0 failed
+2026-01-13 02:37:04 - __main__ - INFO - Starting simulation: Dataset=Chinanet, Attack=degree, Batch=20
+2026-01-13 02:38:38 - __main__ - INFO - Finished: Chinanet (degree)
+2026-01-13 02:38:38 - __main__ - INFO - Progress: 2/10 completed, 0 skipped, 0 failed
+2026-01-13 02:38:38 - __main__ - INFO - Starting simulation: Dataset=Cogentco, Attack=random, Batch=20
+2026-01-13 08:52:16 - __main__ - INFO - Finished: Cogentco (random)
+2026-01-13 08:52:16 - __main__ - INFO - Progress: 3/10 completed, 0 skipped, 0 failed
+2026-01-13 08:52:16 - __main__ - INFO - Starting simulation: Dataset=Cogentco, Attack=degree, Batch=20
+2026-01-13 08:53:33 - __main__ - WARNING - 
+Interrupted by user.
+2026-01-13 08:53:33 - __main__ - WARNING - Task failed: Cogentco (degree)
+2026-01-13 08:53:33 - __main__ - INFO - Progress: 3/10 completed, 0 skipped, 1 failed
+2026-01-13 08:53:33 - __main__ - INFO - Starting simulation: Dataset=Colt, Attack=random, Batch=20
+2026-01-13 08:53:34 - __main__ - WARNING - 
+Interrupted by user.
+2026-01-13 08:53:34 - __main__ - WARNING - Task failed: Colt (random)
+2026-01-13 08:53:34 - __main__ - INFO - Progress: 3/10 completed, 0 skipped, 2 failed
+2026-01-13 08:53:34 - __main__ - INFO - Starting simulation: Dataset=Colt, Attack=degree, Batch=20
+2026-01-13 08:53:34 - __main__ - WARNING - 
+Interrupted by user.
+2026-01-13 08:53:34 - __main__ - WARNING - Task failed: Colt (degree)
+2026-01-13 08:53:34 - __main__ - INFO - Progress: 3/10 completed, 0 skipped, 3 failed
+2026-01-13 08:53:34 - __main__ - INFO - Starting simulation: Dataset=GtsCe, Attack=random, Batch=20
+2026-01-13 08:53:41 - __main__ - WARNING - 
+Interrupted by user.
+2026-01-13 08:53:41 - __main__ - WARNING - Task failed: GtsCe (random)
+2026-01-13 08:53:41 - __main__ - INFO - Progress: 3/10 completed, 0 skipped, 4 failed
+2026-01-13 08:53:41 - __main__ - INFO - Starting simulation: Dataset=GtsCe, Attack=degree, Batch=20
+2026-01-13 08:53:42 - __main__ - WARNING - 
+Interrupted by user.
+2026-01-13 08:53:42 - __main__ - WARNING - Task failed: GtsCe (degree)
+2026-01-13 08:53:42 - __main__ - INFO - Progress: 3/10 completed, 0 skipped, 5 failed
+2026-01-13 08:53:42 - __main__ - INFO - Starting simulation: Dataset=UsCarrier, Attack=random, Batch=20
+2026-01-13 08:53:42 - __main__ - WARNING - 
+Interrupted by user.
+2026-01-13 08:53:42 - __main__ - WARNING - Task failed: UsCarrier (random)
+2026-01-13 08:53:42 - __main__ - INFO - Progress: 3/10 completed, 0 skipped, 6 failed
+2026-01-13 08:53:42 - __main__ - INFO - Starting simulation: Dataset=UsCarrier, Attack=degree, Batch=20
+2026-01-13 08:53:42 - __main__ - WARNING - 
+Interrupted by user.
+2026-01-13 08:53:42 - __main__ - WARNING - Task failed: UsCarrier (degree)
+2026-01-13 08:53:42 - __main__ - INFO - Progress: 3/10 completed, 0 skipped, 7 failed
+2026-01-13 08:53:42 - __main__ - INFO - ============================================================
+2026-01-13 08:53:42 - __main__ - INFO - Batch run completed!
+2026-01-13 08:53:42 - __main__ - INFO -   Total time: 378.21 minutes (22692.59 seconds)
+2026-01-13 08:53:42 - __main__ - INFO -   Completed: 3/10
+2026-01-13 08:53:42 - __main__ - INFO -   Skipped: 0
+2026-01-13 08:53:42 - __main__ - INFO -   Failed: 7
+2026-01-13 08:53:42 - __main__ - INFO - ============================================================

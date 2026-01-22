@@ -6,6 +6,7 @@ from src.utils.logger import get_logger
 # 导入拆分后的模块
 from src.topology.genetic_optimization import solution
 from src.topology.onion_optimization import OnionOptimizer
+from src.topology.onion_optimization_v3 import OnionOptimizerV3, optimize_onion_v3
 from src.topology.romen_optimization import ROHEMOptimizer
 from src.topology.solo_optimization import SOLO
 from src.topology.unity_optimization import UNITY
@@ -24,23 +25,36 @@ def construct_Three(G, controllers_rate):
     G = nx.from_numpy_array(best_solution)
     return G
 
-def construct_onion(G, max_iter=2000):
+def construct_onion(G, max_iter=800, use_v3=True):
     """
     构建 ONION 结构的优化网络 (G5)
+    
+    Args:
+        G: 输入图
+        max_iter: 最大迭代次数
+        use_v3: 是否使用 V3 超高性能版本（默认 True）
+            V3 优化:
+            1. 逆向重组法 + Union-Find: 复杂度从 O(K(N+M)) 降至 O(M·α(N))
+            2. 移除无效哈希缓存
+            3. 攻击序列只计算一次（度保持性质）
     """
-    optimizer = OnionOptimizer(G)
-    # 为了演示速度，这里默认 max_iterations 设为较小值，实际使用可调大
-    G_onion = optimizer.optimize_network(max_iterations=max_iter, verbose=True)
+    if use_v3:
+        optimizer = OnionOptimizerV3(G)
+        G_onion = optimizer.optimize_network(max_iterations=max_iter, verbose=True)
+    else:
+        optimizer = OnionOptimizer(G)
+        G_onion = optimizer.optimize_network(max_iterations=max_iter, verbose=True)
     return G_onion
 
 def construct_romen(G):
     """
     构建 ROMEN 结构的优化网络 (G6)
+    优化版本：减少代数和种群大小
     """
     logger.info("  Starting ROMEN Structure Optimization...")
     optimizer = ROHEMOptimizer(
-        population_size=3,
-        generations=30, # 可根据需要调整
+        population_size=2,  # 减少种群大小
+        generations=15,     # 减少代数
         verbose=True
     )
     G_romen = optimizer.optimize_topology(

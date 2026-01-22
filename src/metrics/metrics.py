@@ -563,3 +563,94 @@ def get_metric_function(metric_name):
     else:
         # 默认为 GCC
         return calculate_gcc
+
+
+# -----------------------------------------------------------
+# R值计算函数（统一x网格插值方法）
+# -----------------------------------------------------------
+
+def calculate_r_value_interpolated(x_curve, y_curve, num_points=101):
+    """
+    计算R值（鲁棒性指标）：使用统一x网格插值后计算曲线下面积
+    
+    问题背景：
+    由于多层网络拆解中存在级联失效，不同方法的x_curve采样点分布不同：
+    1. 采样点不均匀（每次攻击可能导致多个节点失效，x值跳跃式增长）
+    2. 曲线长度不同（某方法可能提前崩溃）
+    
+    解决方案：
+    将所有曲线重采样到统一的x网格（0到1之间num_points个点），然后计算面积
+    
+    Args:
+        x_curve (list): x轴数据（移除节点比例）
+        y_curve (list): y轴数据（韧性指标值）
+        num_points (int): 统一x网格的采样点数，默认101（对应0.01的间隔）
+        
+    Returns:
+        float: R值（归一化后的曲线下面积）
+    """
+    if len(x_curve) < 2 or len(y_curve) < 2:
+        return 0.0
+    
+    # 1. 确保数据有效
+    x_arr = np.array(x_curve, dtype=np.float64)
+    y_arr = np.array(y_curve, dtype=np.float64)
+    
+    # 2. 处理数据：确保x是单调递增的（移除重复点）
+    # 找到唯一的x值及其对应的y值
+    unique_indices = []
+    seen_x = set()
+    for i, x in enumerate(x_arr):
+        if x not in seen_x:
+            unique_indices.append(i)
+            seen_x.add(x)
+    
+    if len(unique_indices) < 2:
+        return 0.0
+    
+    x_arr = x_arr[unique_indices]
+    y_arr = y_arr[unique_indices]
+    
+    # 3. 确保x范围从0开始
+    if x_arr[0] > 0:
+        # 在开头插入(0, y_arr[0])
+        x_arr = np.concatenate([[0.0], x_arr])
+        y_arr = np.concatenate([[y_arr[0]], y_arr])
+    
+    # 4. 确保x范围到1结束（曲线可能提前崩溃）
+    if x_arr[-1] < 1.0:
+        # 在末尾插入(1.0, y_arr[-1])或(1.0, 0.0)
+        # 如果最后的y值已经是0或接近0，则填充0
+        last_y = y_arr[-1] if y_arr[-1] > 1e-10 else 0.0
+        x_arr = np.concatenate([x_arr, [1.0]])
+        y_arr = np.concatenate([y_arr, [last_y]])
+    
+    # 5. 创建统一的x网格
+    x_uniform = np.linspace(0.0, 1.0, num_points)
+    
+    # 6. 线性插值到统一网格
+    y_interpolated = np.interp(x_uniform, x_arr, y_arr)
+    
+    # 7. 使用梯形法则计算面积
+    r_value = np.trapz(y_interpolated, x_uniform)
+    
+    return r_value
+
+
+def calculate_r_value_simple(x_curve, y_curve):
+    """
+    简单R值计算方法：直接使用梯形法则
+    
+    注意：此方法在不同曲线的x采样点不同时可能不够准确
+    建议使用 calculate_r_value_interpolated 替代
+    
+    Args:
+        x_curve (list): x轴数据
+        y_curve (list): y轴数据
+        
+    Returns:
+        float: R值
+    """
+    if len(x_curve) < 2:
+        return 0.0
+    return np.trapz(y_curve, x_curve)

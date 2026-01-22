@@ -170,12 +170,18 @@ def _generate_bimodal_graph(n, m, k1, k2, kmax, kmin):
     return G_simple
 
 
-def create_bimodal_network_exact(G):
+def create_bimodal_network_exact(G, hub_ratio=0.05):
     """
-    构造符合最优双峰度分布的无向网络（精准分配低度节点的度）
+    构造符合最优双峰度分布的无向网络（增强版 - 多hub节点）
+    
+    改进：
+    1. 增加高度节点（hub）数量，使网络更健壮
+    2. 优化hub节点之间的连接，形成核心骨干
+    3. 保证级联失效时的抗毁性
     
     参数:
         G: 输入图
+        hub_ratio: hub节点占总节点的比例，默认0.05 (5%)
     
     返回:
         G: networkx.Graph 对象，构造好的双峰网络
@@ -188,106 +194,144 @@ def create_bimodal_network_exact(G):
     random.seed(seed)
     np.random.seed(seed)
     
-    # 2. 动态计算度序列参数
+    # 2. 计算双峰度分布参数
     total_degree = 2 * M
     avg_degree = total_degree / N
     
-    # 根据理论公式计算 k_max
-    # k_max = A * N^(2/3)
-    # 其中 A = (2 * <k>^2 * (<k>-1)^2 / (2*<k>-1))^(1/3)
+    # Hub节点数量：至少2个，最多N的hub_ratio比例
+    num_hubs = max(2, min(int(N * hub_ratio), N // 5))
+    
+    # 计算 k_max (hub节点的度)
+    # 根据理论公式: k_max = A * N^(2/3)，但考虑多个hub节点
     k = avg_degree
-    A = (2 * k**2 * (k - 1)**2 / (2 * k - 1))**(1/3)
-    k_max = int(A * (N**(2/3)))
+    if k > 1 and (2 * k - 1) > 0:
+        A = (2 * k**2 * (k - 1)**2 / (2 * k - 1))**(1/3)
+        k_max = int(A * (N**(2/3)) / (num_hubs ** 0.5))  # 调整以适应多hub
+    else:
+        k_max = int(avg_degree * 3)
     
     # 确保 k_max 在合理范围内
     k_max = min(k_max, N - 1)
-    if k_max < int(avg_degree) + 1:
-        k_max = int(avg_degree) + 1
+    if k_max < int(avg_degree * 2):
+        k_max = int(avg_degree * 2)
     
-    num_max_nodes = 1
-    remaining_degree = total_degree - k_max * num_max_nodes
-    num_min_nodes = N - num_max_nodes
+    # 3. 计算叶节点（spoke）的度
+    num_spokes = N - num_hubs
+    total_hub_degree = k_max * num_hubs
+    remaining_degree = total_degree - total_hub_degree
     
-    # 计算低度节点的度分配
-    # 设 x 个节点度为 k_mid，y 个节点度为 k_min
-    # x + y = num_min_nodes
-    # x * k_mid + y * k_min = remaining_degree
+    if num_spokes > 0:
+        avg_spoke_degree = remaining_degree / num_spokes
+        # 叶节点使用较低的度
+        k_min = max(1, int(avg_spoke_degree * 0.7))
+        k_mid = max(k_min + 1, int(avg_spoke_degree * 1.3))
+    else:
+        k_min = 1
+        k_mid = 2
     
-    k_min = max(1, int(avg_degree * 0.5))
-    k_mid = int(avg_degree * 1.5)
+    # 4. 分配叶节点的度
+    if num_spokes > 0:
+        denominator = k_mid - k_min if k_mid > k_min else 1
+        x = (remaining_degree - num_spokes * k_min) // denominator
+        y = num_spokes - x
+        
+        # 确保 x 和 y 在合理范围内
+        x = max(0, min(x, num_spokes))
+        y = num_spokes - x
+    else:
+        x = y = 0
     
-    # 解方程: x * k_mid + (num_min_nodes - x) * k_min = remaining_degree
-    # x * (k_mid - k_min) = remaining_degree - num_min_nodes * k_min
-    denominator = k_mid - k_min
-    if denominator <= 0:
-        denominator = 1
-    
-    x = (remaining_degree - num_min_nodes * k_min) // denominator
-    y = num_min_nodes - x
-    
-    # 确保 x 和 y 在合理范围内
-    if x < 0:
-        x = 0
-        y = num_min_nodes
-    if y < 0:
-        y = 0
-        x = num_min_nodes
+    # 5. 构造度序列
+    # Hub节点在前，叶节点在后
+    degree_sequence = [k_max] * num_hubs + [k_mid] * x + [k_min] * y
     
     # 调整度值以确保总和匹配
-    actual_degree = k_max * num_max_nodes + x * k_mid + y * k_min
+    actual_degree = sum(degree_sequence)
     remainder = total_degree - actual_degree
     
-    # 将余数均匀分配到节点上
-    degree_sequence = [k_max] * num_max_nodes + [k_mid] * x + [k_min] * y
-    for i in range(remainder):
-        degree_sequence[i % N] += 1
+    # 将余数分配到节点上（优先分配给叶节点，避免hub过度集中）
+    if remainder > 0:
+        for i in range(remainder):
+            idx = num_hubs + (i % max(1, num_spokes))
+            if idx < N:
+                degree_sequence[idx] += 1
+    elif remainder < 0:
+        for i in range(-remainder):
+            idx = num_hubs + (i % max(1, num_spokes))
+            if idx < N and degree_sequence[idx] > 1:
+                degree_sequence[idx] -= 1
     
-    # 打乱度序列（避免模式化）
-    random.shuffle(degree_sequence)
+    # 确保总度数为偶数
+    if sum(degree_sequence) % 2 != 0:
+        # 找到一个非hub节点加1
+        for i in range(num_hubs, N):
+            degree_sequence[i] += 1
+            break
     
-    # 3. 验证度序列的合法性（可图化）
-    # 满足Erdős–Gallai条件（networkx会自动校验）
+    # 6. 保存hub节点索引（在打乱之前）
+    hub_indices_before_shuffle = list(range(num_hubs))
+    
+    # 打乱叶节点部分（保持hub在前面以便后续处理）
+    spoke_degrees = degree_sequence[num_hubs:]
+    random.shuffle(spoke_degrees)
+    degree_sequence = degree_sequence[:num_hubs] + spoke_degrees
+    
+    # 7. 生成网络
     try:
-        # 用配置模型生成网络（保证度序列严格匹配）
-        G = nx.configuration_model(degree_sequence, seed=seed)
-        # 转为无向简单图（移除自环和重边）
-        G = G.to_undirected()
-        G.remove_edges_from(nx.selfloop_edges(G))
+        G_new = nx.configuration_model(degree_sequence, seed=seed)
+        G_new = nx.Graph(G_new)  # 转为简单图
+        G_new.remove_edges_from(nx.selfloop_edges(G_new))
     except Exception as e:
         print(f"配置模型生成失败，原因：{e}")
-        # 备用方案：手动构造
-        G = nx.Graph()
-        G.add_nodes_from(range(N))
-        # 按度序列连接节点
+        G_new = nx.Graph()
+        G_new.add_nodes_from(range(N))
+        
+        # 手动构造：优先连接高度节点
         nodes_by_degree = sorted(range(N), key=lambda i: degree_sequence[i], reverse=True)
         for node in nodes_by_degree:
             target_degree = degree_sequence[node]
-            current_degree = G.degree(node)
+            current_degree = G_new.degree(node)
             need_edges = target_degree - current_degree
             if need_edges <= 0:
                 continue
-            # 随机选其他节点连接（避免重复/自环）
-            candidates = [n for n in range(N) if n != node and not G.has_edge(node, n)]
-            add_edges = random.sample(candidates, min(need_edges, len(candidates)))
-            for other_node in add_edges:
-                G.add_edge(node, other_node)
+            candidates = [n for n in range(N) if n != node and not G_new.has_edge(node, n)]
+            if candidates:
+                add_edges = random.sample(candidates, min(need_edges, len(candidates)))
+                for other in add_edges:
+                    G_new.add_edge(node, other)
     
-    # 4. 最终校准边数（确保严格等于M）
-    current_edges = G.number_of_edges()
+    # 8. 确保hub节点之间互相连接（形成核心骨干）
+    for i in range(num_hubs):
+        for j in range(i + 1, num_hubs):
+            if not G_new.has_edge(i, j):
+                # 尝试添加边，但要保持总边数
+                # 找一条可以移除的边（非hub-hub边）
+                removable_edges = [(u, v) for u, v in G_new.edges() 
+                                   if not (u < num_hubs and v < num_hubs)]
+                if removable_edges:
+                    edge_to_remove = random.choice(removable_edges)
+                    G_new.remove_edge(*edge_to_remove)
+                    G_new.add_edge(i, j)
+    
+    # 9. 最终校准边数
+    current_edges = G_new.number_of_edges()
     if current_edges < M:
         need_more = M - current_edges
-        # 生成所有可能的未连接边
-        all_possible = []
-        for u in range(N):
-            for v in range(u+1, N):
-                if not G.has_edge(u, v):
-                    all_possible.append((u, v))
-        add_edges = random.sample(all_possible, need_more)
-        G.add_edges_from(add_edges)
+        all_possible = [(u, v) for u in range(N) for v in range(u+1, N) 
+                        if not G_new.has_edge(u, v)]
+        if len(all_possible) >= need_more:
+            add_edges = random.sample(all_possible, need_more)
+            G_new.add_edges_from(add_edges)
     elif current_edges > M:
         need_less = current_edges - M
-        remove_edges = random.sample(list(G.edges()), need_less)
-        G.remove_edges_from(remove_edges)
+        # 优先移除非hub边
+        removable = [(u, v) for u, v in G_new.edges() 
+                     if not (u < num_hubs or v < num_hubs)]
+        if len(removable) >= need_less:
+            remove_edges = random.sample(removable, need_less)
+        else:
+            remove_edges = random.sample(list(G_new.edges()), need_less)
+        G_new.remove_edges_from(remove_edges)
     
-    return G
+    return G_new
 

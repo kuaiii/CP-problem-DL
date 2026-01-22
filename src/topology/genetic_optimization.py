@@ -55,8 +55,9 @@ class GeneticAlgorithm:
     
     def evaluate_population(self, population, alpha=0.3, beta=0.3):
         """
-        评估种群中个体的适应度。
+        评估种群中个体的适应度 - 优化版本。
         """
+        # 串行评估（已足够快，批量GPU评估需要更多实现）
         fitness_values = [self.evaluator.evaluate_network(individual) for individual in population]
         # 处理无效的适应度值
         fitness_values = [f if not (np.isnan(f) or np.isinf(f)) else -np.inf for f in fitness_values]
@@ -163,7 +164,7 @@ class GeneticAlgorithm:
         
         # 早停参数
         no_improvement_count = 0
-        early_stop_patience = 50  # 连续50代无改进则停止
+        early_stop_patience = 30  # 连续30代无改进则停止
         
         pbar = tqdm(range(self.max_generations), desc="GA Optimization")
 
@@ -209,7 +210,20 @@ class ResilienceNetworkOptimizer():
         self.edges = L
         self.alpha = alpha
         self.beta = beta
-        self.use_gpu = TORCH_AVAILABLE and torch.cuda.is_available() and N <= 500
+        # 智能GPU选择：对于小图（<200节点），CPU可能更快（避免传输开销）
+        # 对于大图（>=200节点），GPU加速效果明显
+        # GPU对于中等图（200-400节点）可能因为传输开销反而变慢
+        gpu_available = TORCH_AVAILABLE and torch.cuda.is_available()
+        if gpu_available:
+            # 只对较大图使用GPU（>=300节点），小图用CPU更快
+            # 可以根据实际测试调整阈值
+            self.use_gpu = N >= 300  # 只对300节点以上的图使用GPU
+            if self.use_gpu:
+                logger.info(f"  Using GPU for fitness evaluation (N={N})")
+            else:
+                logger.info(f"  Using CPU for fitness evaluation (N={N}, GPU overhead too high for small graphs)")
+        else:
+            self.use_gpu = False
         
         # 缓存机制
         self._nc_cache = {}
@@ -240,13 +254,14 @@ class ResilienceNetworkOptimizer():
         
         adj_matrix = adj_matrix.astype(np.float64)
         try:
-            if self.use_gpu and self.nodes <= 300:
-                # GPU 加速版本
-                adj_tensor = torch.tensor(adj_matrix, dtype=torch.float64, device=DEVICE)
-                eigenvalues = torch.linalg.eigvalsh(adj_tensor.float())  # 使用对称矩阵特化算法
-                evals = eigenvalues.cpu().numpy()
+            if self.use_gpu:
+                # GPU 加速版本（仅用于大图，>=300节点）
+                # 使用float32减少传输时间，提高GPU利用率
+                adj_tensor = torch.tensor(adj_matrix, dtype=torch.float32, device=DEVICE)
+                eigenvalues = torch.linalg.eigvalsh(adj_tensor)  # 使用对称矩阵特化算法
+                evals = eigenvalues.cpu().numpy().astype(np.float64)  # 转回float64用于后续计算
             else:
-                # CPU 版本
+                # CPU 版本（对小图更快，避免GPU传输开销）
                 eigenvalues = eig(adj_matrix, left=False, right=False)
                 evals = eigenvalues.real
 
@@ -274,19 +289,14 @@ class ResilienceNetworkOptimizer():
     
     def calculate_degree_variance(self, adj_matrix):
         """
-        计算度方差 - 向量化版本。
+        计算度方差 - 向量化版本（CPU优化）。
+        度方差计算很快，GPU传输开销大于收益，统一使用CPU。
         """
-        if self.use_gpu:
-            adj_tensor = torch.tensor(adj_matrix, dtype=torch.float32, device=DEVICE)
-            degrees = torch.sum(adj_tensor, dim=1)
-            mean_degree = torch.mean(degrees)
-            degree_variance = torch.mean((degrees - mean_degree) ** 2)
-            return degree_variance.item()
-        else:
-            degrees = np.sum(adj_matrix, axis=1)
-            mean_degree = np.mean(degrees)
-            degree_variance = np.mean((degrees - mean_degree) ** 2)
-            return degree_variance
+        # 即使使用GPU，度方差计算也用CPU（计算量小，GPU传输开销大）
+        degrees = np.sum(adj_matrix, axis=1)
+        mean_degree = np.mean(degrees)
+        degree_variance = np.mean((degrees - mean_degree) ** 2)
+        return degree_variance
     
     def evaluate_network(self, adj_matrix):
         """
@@ -307,15 +317,15 @@ class ResilienceNetworkOptimizer():
                 (1-self.alpha-self.beta) * (mu/mu_max))
         return fitness
 
-def solution(nodes, edges, max_generations=100, population_size=8):
+def solution(nodes, edges, max_generations=80, population_size=6):
     """
-    GA 优化入口函数 - 优化版本。
+    GA 优化入口函数 - 高性能版本。
     
     Args:
         nodes: 节点数
         edges: 边数
-        max_generations: 最大代数 (默认100，配合早停)
-        population_size: 种群大小 (默认8)
+        max_generations: 最大代数 (默认80，配合早停)
+        population_size: 种群大小 (默认6)
     """
     mutation_rate = 0.2
     alpha = 0.4

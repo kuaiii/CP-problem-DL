@@ -270,8 +270,12 @@ def get_node_features(G):
 
 def calculate_reward(G, centers, mode='combined'):
     """
-    计算综合奖励，包含 Robustness, CSA, H_C, WCP。
-    Reward = w1*R + w2*CSA + w3*H_C + w4*WCP
+    计算综合奖励（增强版 - 级联失效感知）
+    
+    改进：
+    1. 模拟攻击后考虑级联失效（不含控制器的分量会失效）
+    2. 增加对控制器分布的评估（覆盖多个连通分量）
+    3. 惩罚控制器过度集中在单一区域
     
     Args:
         G (nx.Graph): 网络拓扑
@@ -280,60 +284,105 @@ def calculate_reward(G, centers, mode='combined'):
     """
     if not centers:
         return 0.0
-        
-    # 1. Robustness (R) - 模拟蓄意攻击
+    
+    centers_set = set(centers)
+    total_nodes = G.number_of_nodes()
+    
+    # 1. Robustness with Cascade Failure Awareness
     if mode in ['combined', 'robustness']:
         G_copy = G.copy()
-        num_remove = max(1, int(G.number_of_nodes() * 0.1))
+        num_remove = max(1, int(total_nodes * 0.1))
         degrees = dict(G_copy.degree())
         targets = sorted(degrees, key=degrees.get, reverse=True)[:num_remove]
         
+        # 移除高度节点（模拟攻击）
+        remaining_centers = centers_set.copy()
         for node in targets:
             if node in G_copy:
                 G_copy.remove_node(node)
-                
-        if G_copy.number_of_nodes() > 0:
-            largest_cc = max(nx.connected_components(G_copy), key=len)
-            r_val = len(largest_cc) / G.number_of_nodes()
+                remaining_centers.discard(node)
+        
+        # 级联失效：计算含控制器的节点数
+        if G_copy.number_of_nodes() > 0 and remaining_centers:
+            components = list(nx.connected_components(G_copy))
+            controlled_nodes = 0
+            for comp in components:
+                # 只有包含控制器的分量是"存活"的
+                if not remaining_centers.isdisjoint(comp):
+                    controlled_nodes += len(comp)
+            r_val = controlled_nodes / total_nodes
         else:
             r_val = 0.0
     else:
         r_val = 0.0
-        
-    # 2. CSA
+    
+    # 2. CSA (Control Supply Availability)
     if mode in ['combined', 'csa']:
         csa_val = calculate_csa(G, centers)
     else:
         csa_val = 0.0
     
-    # 3. H_C (Control Entropy)
+    # 3. H_C (Control Entropy) - 衡量控制器负载均衡
     if mode in ['combined', 'entropy']:
         hc_val = calculate_control_entropy(G, centers)
     else:
         hc_val = 0.0
     
-    # 4. WCP
+    # 4. WCP (Weighted Control Potential)
     if mode in ['combined', 'wcp']:
         wcp_val = calculate_wcp(G, centers)
     else:
         wcp_val = 0.0
     
+    # 5. 新增：控制器分布奖励（覆盖尽可能多的连通分量）
+    if mode in ['combined', 'robustness']:
+        components = list(nx.connected_components(G))
+        num_controlled_components = sum(1 for comp in components 
+                                        if not centers_set.isdisjoint(comp))
+        coverage_ratio = num_controlled_components / max(1, len(components))
+    else:
+        coverage_ratio = 1.0
+    
+    # 6. 新增：控制器间距奖励（避免控制器过度集中）
+    if mode in ['combined', 'robustness'] and len(centers) > 1:
+        try:
+            min_dist = float('inf')
+            for i, c1 in enumerate(centers):
+                for c2 in centers[i+1:]:
+                    if G.has_node(c1) and G.has_node(c2) and nx.has_path(G, c1, c2):
+                        dist = nx.shortest_path_length(G, c1, c2)
+                        min_dist = min(min_dist, dist)
+            # 归一化：最小距离至少为1，理想情况下应该分散
+            if min_dist != float('inf'):
+                dispersion_bonus = min(min_dist / 3.0, 1.0)  # 距离>=3时满分
+            else:
+                dispersion_bonus = 0.5  # 不连通时给中等分数
+        except:
+            dispersion_bonus = 0.5
+    else:
+        dispersion_bonus = 1.0
+    
     # 综合奖励计算
     if mode == 'robustness':
-        return r_val
+        # 增强版：考虑覆盖率和分散度
+        return r_val * 0.6 + coverage_ratio * 0.25 + dispersion_bonus * 0.15
     elif mode == 'csa':
         return csa_val
     elif mode == 'entropy':
         return hc_val
     elif mode == 'wcp':
         return wcp_val
-    else: # combined
-        # 权重设置 (Heuristic)
-        # R: [0, 1] (通常 < 0.5) -> w=2.0
-        # CSA: [0, 1] -> w=1.0
-        # H_C: [0, log(N)] -> w=0.2 (稍微降低权重)
-        # WCP: [0, 1] -> w=1.0
-        return 2.0 * r_val + 1.0 * csa_val + 0.2 * hc_val + 1.0 * wcp_val
+    else:  # combined
+        # 权重设置（考虑级联失效感知）
+        # R: 主要指标 -> w=2.0
+        # Coverage: 连通分量覆盖 -> w=0.5
+        # Dispersion: 控制器分散度 -> w=0.3
+        # CSA: 控制供给可用性 -> w=1.0
+        # H_C: 控制熵 -> w=0.2
+        # WCP: 加权控制势能 -> w=1.0
+        base_reward = 2.0 * r_val + 1.0 * csa_val + 0.2 * hc_val + 1.0 * wcp_val
+        cascade_bonus = 0.5 * coverage_ratio + 0.3 * dispersion_bonus
+        return base_reward + cascade_bonus
 
 _global_model = None
 
@@ -388,28 +437,86 @@ def predict(G, k, model=None, model_path=None):
     return best_centers
 
 def train_and_select(G, k, episodes=50, metric_type='combined'):
-    # 根据 metric_type 选择模型
-    # metric_type: 'combined', 'robustness', 'csa', 'entropy', 'wcp'
+    """
+    增强版控制器选择：结合预训练模型和在线微调
     
-    model_name = 'rl_agent.pth' # default combined
+    改进：
+    1. 更积极的在线微调（episodes >= 60 时启用）
+    2. 多轮采样取最优解
+    3. 结合贪婪和随机探索
+    
+    Args:
+        G: 网络拓扑
+        k: 控制器数量
+        episodes: 训练轮数
+        metric_type: 优化目标类型
+    """
+    # 根据 metric_type 选择模型
+    model_name = 'rl_agent.pth'  # default combined
     if metric_type != 'combined':
         model_name = f'rl_agent_{metric_type}.pth'
         
     model_path = os.path.join('models', model_name)
     
-    # 检查是否应使用混合方法 (Community -> RL -> K-Median)
+    # 检查是否应使用混合方法
     if os.path.exists(model_path):
         # 混合方法实现
+        # 降低在线微调阈值：episodes >= 60 时启用
+        if episodes >= 60:
+            logger.debug(f"Enhanced training: {episodes} episodes with online fine-tuning")
+            
+            # 多轮采样策略
+            best_centers = None
+            best_reward = -float('inf')
+            
+            # 第1轮：使用预训练模型
+            centers_pretrained = hybrid_rl_select(G, k, model_path=model_path)
+            reward_pretrained = calculate_reward(G, centers_pretrained, mode=metric_type)
+            if reward_pretrained > best_reward:
+                best_reward = reward_pretrained
+                best_centers = centers_pretrained
+            
+            # 第2轮：在线微调
+            centers_finetuned = train_offline_single(
+                G, k, episodes, 
+                metric_type=metric_type, 
+                initial_centers=centers_pretrained
+            )
+            if centers_finetuned:
+                reward_finetuned = calculate_reward(G, centers_finetuned, mode=metric_type)
+                if reward_finetuned > best_reward:
+                    best_reward = reward_finetuned
+                    best_centers = centers_finetuned
+            
+            # 第3轮：如果episodes足够多，尝试纯在线训练（更多探索）
+            if episodes >= 100:
+                centers_fresh = train_offline_single(G, k, episodes // 2, metric_type=metric_type)
+                if centers_fresh:
+                    reward_fresh = calculate_reward(G, centers_fresh, mode=metric_type)
+                    if reward_fresh > best_reward:
+                        best_reward = reward_fresh
+                        best_centers = centers_fresh
+            
+            return best_centers if best_centers else centers_pretrained
+        
         return hybrid_rl_select(G, k, model_path=model_path)
     else:
         # 在线训练的回退方案
-        # 注意：这里在线训练仍然使用 combined 奖励，除非我们也修改 train_offline_single
-        # 为了简单起见，如果找不到特定模型，就回退到 combined 模型
         if metric_type != 'combined' and os.path.exists('models/rl_agent.pth'):
-             logger.warning(f"Specific model {model_name} not found, using combined model.")
-             return hybrid_rl_select(G, k, model_path='models/rl_agent.pth')
-             
-        return train_offline_single(G, k, episodes)
+            logger.warning(f"Specific model {model_name} not found, using combined model.")
+            if episodes >= 60:
+                logger.debug(f"Enhanced training with fallback model: {episodes} episodes")
+                centers = hybrid_rl_select(G, k, model_path='models/rl_agent.pth')
+                fine_tuned_centers = train_offline_single(
+                    G, k, episodes, 
+                    metric_type=metric_type, 
+                    initial_centers=centers
+                )
+                return fine_tuned_centers if fine_tuned_centers else centers
+            return hybrid_rl_select(G, k, model_path='models/rl_agent.pth')
+        
+        # 纯在线训练
+        return train_offline_single(G, k, max(episodes, 80), metric_type=metric_type)
 
 def hybrid_rl_select(G, total_controllers_budget, model_path='models/rl_agent.pth'):
     """
@@ -630,7 +737,7 @@ def train_offline(graphs_list, epochs=100, save_path='models/rl_agent.pth', mode
     torch.save(model.state_dict(), save_path)
     logger.info(f"Model saved to {save_path}")
 
-def train_offline_single(G, k, episodes):
+def train_offline_single(G, k, episodes, metric_type='combined', initial_centers=None):
     x, node_list = get_node_features(G)
     x = x.to(DEVICE)  # 移动特征到 GPU
     
@@ -638,9 +745,20 @@ def train_offline_single(G, k, episodes):
     model = MLPPolicy(num_features=5, hidden_dim=64, output_dim=1)
     model = model.to(DEVICE)  # 移动模型到 GPU
     
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-    best_reward = -1.0
-    best_centers = []
+    # 如果提供了初始控制器，使用它们作为起点
+    if initial_centers:
+        # 计算初始奖励
+        initial_reward = calculate_reward(G, initial_centers, mode=metric_type)
+        best_reward = initial_reward
+        best_centers = initial_centers.copy()
+        logger.debug(f"Starting with initial centers, reward: {initial_reward:.4f}")
+    else:
+        best_reward = -1.0
+        best_centers = []
+    
+    # 根据episodes数量调整学习率：更多episodes时使用更小的学习率
+    lr = 0.005 if episodes > 50 else 0.01
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     
     for episode in range(episodes):
         selected_indices = []
@@ -655,7 +773,7 @@ def train_offline_single(G, k, episodes):
             mask = mask.clone()
             mask[action.item()] = True
         centers = [node_list[i] for i in selected_indices]
-        reward = calculate_reward(G, centers)
+        reward = calculate_reward(G, centers, mode=metric_type)
         if reward > best_reward:
             best_reward = reward
             best_centers = centers
@@ -665,6 +783,7 @@ def train_offline_single(G, k, episodes):
         optimizer.zero_grad()
         if loss:
             sum(loss).backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # 梯度裁剪
             optimizer.step()
             
     if not best_centers and k > 0:

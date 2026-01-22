@@ -126,8 +126,8 @@ def plot_bar_chart(data_dict, y_label, save_dir, filename):
     colors = ['#4C72B0', '#55A868', '#C44E52', '#8172B3', '#CCB974', '#64B5CD', '#8C8C8C', '#E377C2', '#BCBD22', '#17BECF', '#FF7F0E', '#2CA02C', '#D62728', '#9467BD', '#8C564B']
     markers = ['o', 's', '^', 'D', 'v', '+', '*', 'x', 'p', 'h', '1', '2', '3', '4', '8']
     
-    # 定义标准的显示顺序，确保柱状图按逻辑排列（已删除 Random+RL, Bimodal+Random, SOLO+Ra, SOLO+RL）
-    labels = ["Baseline", "RCP", "Bi-level", "GA+RL", "Onion+Ra", "Onion+RL", "ROMEN+Ra", "ROMEN+RL", "BimodalRL", "UNITY+Ra", "UNITY+RL"]
+    # 定义标准的显示顺序，确保柱状图按逻辑排列（已更新：所有Ra方法已替换为RL）
+    labels = ["Baseline", "RCP", "Bi-level", "GA+RL", "Onion+RL", "ROMEN+RL", "BimodalRL", "UNITY+RL"]
     
     # 提取数据
     xvalues_list = []
@@ -203,8 +203,8 @@ def plot_box_chart(data_dict, y_label, save_dir, filename):
         'axes.facecolor': '#f8f9fa'
     })
     
-    colors = ['#4C72B0', '#55A868', '#C44E52', '#8172B3', '#CCB974', '#64B5CD', '#8C8C8C', '#E377C2', '#BCBD22', '#17BECF', '#FF7F0E']
-    labels = ["Baseline", "RCP", "Bi-level", "GA+RL", "Onion+Ra", "Onion+RL", "ROMEN+Ra", "ROMEN+RL", "BimodalRL", "UNITY+Ra", "UNITY+RL"]
+    colors = ['#4C72B0', '#55A868', '#C44E52', '#8172B3', '#CCB974', '#64B5CD', '#8C8C8C', '#E377C2']
+    labels = ["Baseline", "RCP", "Bi-level", "GA+RL", "Onion+RL", "ROMEN+RL", "BimodalRL", "UNITY+RL"]
     
     plot_data = []
     plot_labels = []
@@ -264,3 +264,83 @@ def plot_curve(x_values, dataset_name, attack_mode, experiment_id, save_dir=None
     # 绘制崩溃点 (X values)
     plot_bar_chart(x_values, "Proportion of Removed Nodes at Collapse (f)", save_dir, "collapse_point_bar.png")
     plot_box_chart(x_values, "Proportion of Removed Nodes at Collapse (f)", save_dir, "collapse_point_box.png")
+
+def plot_curves_for_batches(curves_data, save_dir, metric_type, attack_mode, batch_size, dataset_name):
+    """
+    绘制前5个batch的折线图（如果batch_size<5就全画）。
+    
+    Args:
+        curves_data (dict): {method: [(x_list, y_list, r_value), ...]} 每个方法对应多个batch的曲线数据
+        save_dir (str): 保存目录
+        metric_type (str): 指标类型
+        attack_mode (str): 攻击模式
+        batch_size (int): batch总数
+        dataset_name (str): 数据集名称
+    """
+    # 确定要绘制的batch数量
+    num_batches_to_plot = min(5, batch_size)
+    
+    if num_batches_to_plot == 0:
+        return
+    
+    # 固定顺序，只绘制有数据的方法（已更新：所有Ra方法已替换为RL）
+    fixed_order = ["Baseline", "RCP", "Bi-level", "GA+RL", "Onion+RL", "ROMEN+RL", "BimodalRL", "UNITY+RL"]
+    
+    # 为每个batch绘制折线图
+    for batch_idx in range(num_batches_to_plot):
+        X, Y, labels = [], [], []
+        
+        for method in fixed_order:
+            if method not in curves_data or len(curves_data[method]) <= batch_idx:
+                continue
+            
+            x_list, y_list, r_value = curves_data[method][batch_idx]
+            X.append(x_list)
+            Y.append(y_list)
+            labels.append(f"{method} (R={r_value:.4f})")
+        
+        if not X:
+            continue
+        
+        # 定义指标名称映射
+        metric_labels = {
+            'lcc': 'LCC (Largest Connected Component)',
+            'csa': 'CSA (Control Supply Availability)',
+            'cce': 'CCE (Control Entropy)',
+            'wcp': 'WCP (Weighted Control Potential)'
+        }
+        y_label = metric_labels.get(metric_type, metric_type.upper())
+        
+        # 使用plot_different_topo绘制
+        colors = ['#4C72B0', '#55A868', '#C44E52', '#8172B3', '#CCB974', '#64B5CD', '#8C8C8C', '#E377C2', '#BCBD22', '#17BECF', '#FF7F0E']
+        linestyles = ['-', '--', '-.', ':', '-', '--', '-.', ':', '-', '--', '-.']
+        markers = ['o', 's', '^', 'D', 'v', '+', '*', 'x', 'p', 'h', '1']
+        
+        plot_title = f"{attack_mode} - {metric_type.upper()} - Batch{batch_idx}"
+        try:
+            # 使用plot_different_topo绘制，文件名会自动添加batch_idx
+            plot_different_topo(len(X), X, Y, colors, linestyles, markers, labels, batch_idx, plot_title, save_dir, y_label=y_label)
+        except Exception as e:
+            from src.utils.logger import get_logger
+            logger = get_logger(__name__)
+            logger.error(f"Plotting failed for batch {batch_idx}: {e}")
+
+def plot_collapse_point_charts(collapse_points, save_dir, metric_type, attack_mode):
+    """
+    绘制崩溃点的bar图和箱线图。
+    
+    Args:
+        collapse_points (dict): {method: [collapse_point_values]} 每个方法对应多个batch的崩溃点
+        save_dir (str): 保存目录
+        metric_type (str): 指标类型
+        attack_mode (str): 攻击模式
+    """
+    # 过滤掉没有数据的方法
+    filtered_data = {k: v for k, v in collapse_points.items() if v}
+    
+    if not filtered_data:
+        return
+    
+    # 绘制bar图和箱线图
+    plot_bar_chart(filtered_data, f"Collapse Point ({metric_type.upper()})", save_dir, f"collapse_point_bar_{attack_mode}_{metric_type}.png")
+    plot_box_chart(filtered_data, f"Collapse Point ({metric_type.upper()})", save_dir, f"collapse_point_box_{attack_mode}_{metric_type}.png")
